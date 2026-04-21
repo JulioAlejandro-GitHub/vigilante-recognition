@@ -14,5 +14,11 @@ engine = create_engine(settings.sqlalchemy_url, future=True, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
+def init_db() -> None:
+    # Import models so they are registered with Base.metadata
+    import app.models  # noqa: F401
+    Base.metadata.create_all(bind=engine)
+
+
 def get_session():
     return SessionLocal()

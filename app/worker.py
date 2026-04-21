@@ -5,7 +5,7 @@ import logging
 
 from app.config import settings
 from app.consumer import load_fixture_message
-from app.db import get_session
+from app.db import get_session, init_db
 from app.domain.events import build_recognition_event
 from app.infra.repository import RecognitionRepository
 from app.logging import configure_logging
@@ -26,9 +26,6 @@ def process_fixture(fixture_path: str) -> dict:
         publisher = EventPublisher()
 
         subject, track = track_service.open_track_from_frame(message)
-
-        repo.update_track_presence(track)
-        repo.update_track_presence(track)
 
         decision = presence_service.decide(track)
         event = build_recognition_event(
@@ -72,6 +69,7 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging(settings.log_level)
+    init_db()
     event = process_fixture(args.fixture)
     logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
 

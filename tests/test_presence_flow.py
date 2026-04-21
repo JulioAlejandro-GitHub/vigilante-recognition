@@ -12,17 +12,21 @@ class DummyTrack:
 def test_presence_detected_after_threshold():
     service = PresenceService()
     decision = service.decide(DummyTrack(frame_count=3, person_presence_score=0.9))
-    assert isinstance(decision, PresenceDecision)
+    assert decision is not None
     assert decision.event_type == "human_presence_detected"
+    assert decision.severity == "medium"
+    assert decision.confidence == 0.9
 
 
 def test_presence_no_face_before_threshold():
     service = PresenceService()
     decision = service.decide(DummyTrack(frame_count=1, person_presence_score=0.5))
     assert decision.event_type == "human_presence_no_face"
+    assert decision.severity == "low"
+    assert decision.confidence == 0.5
 
 
 def test_fixture_contract_shape():
     msg = load_fixture_message("tests/fixtures/frame_ingested_example.json")
     assert "correlation_id" in msg.context
-    assert "captured_at" in msg.payload
+    assert msg.payload.captured_at is not None

@@ -34,13 +34,36 @@ Su objetivo es dejar un bootstrap funcional para:
 
 ## Arranque local
 
+1. Crea el entorno virtual y actívalo:
 ```bash
-python3.11 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-pytest
-python -m app.worker --fixture tests/fixtures/frame_ingested_example.json
 ```
+
+2. Configura tu entorno:
+Copia `.env.example` a `.env` y asegúrate de que los datos de conexión a Postgres sean correctos. La base de datos y esquemas (`recognition`, `outbox`) deben estar creados y asignados al usuario que configures.
+
+3. Ejecuta los tests:
+```bash
+PYTHONPATH=. pytest
+```
+
+4. Ejecuta el worker usando el fixture de ejemplo:
+```bash
+PYTHONPATH=. python -m app.worker --fixture tests/fixtures/frame_ingested_example.json
+```
+
+## Pendiente para Slice 2
+
+- matching facial completo
+- `candidate_match`
+- correlación cross-camera
+- descriptor semántico con Hugging Face
+- integración real con media
+- integración real con alerting
+- revisión humana
+- Integración real con RabbitMQ en `consumer.py` y `publisher.py`
 
 ## Contrato que consume
 

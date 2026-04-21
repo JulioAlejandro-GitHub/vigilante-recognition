@@ -1,34 +1,40 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel, Field
 
-@dataclass(slots=True)
-class FrameIngestedMessage:
+
+class FramePayload(BaseModel):
+    camera_id: str
+    captured_at: datetime
+    frame_ref: str
+    quality_metadata: dict[str, float] = Field(default_factory=dict)
+
+
+class FrameIngestedMessage(BaseModel):
     event_id: str
     event_type: str
     event_version: str
-    occurred_at: str
-    payload: dict[str, Any]
+    occurred_at: datetime
+    payload: FramePayload
     context: dict[str, Any]
 
     @property
     def camera_id(self) -> str:
-        return str(self.payload["camera_id"])
+        return self.payload.camera_id
 
     @property
     def captured_at(self) -> datetime:
-        return datetime.fromisoformat(self.payload["captured_at"].replace("Z", "+00:00"))
+        return self.payload.captured_at
 
     @property
     def frame_ref(self) -> str:
-        return str(self.payload["frame_ref"])
+        return self.payload.frame_ref
 
 
-@dataclass(slots=True)
-class PresenceDecision:
+class PresenceDecision(BaseModel):
     event_type: str
     severity: str
     confidence: float
