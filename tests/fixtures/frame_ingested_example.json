@@ -1,0 +1,21 @@
+{
+  "event_id": "evt_ing_001",
+  "event_type": "frame.ingested",
+  "event_version": "1.0",
+  "occurred_at": "2026-03-17T15:30:45.123Z",
+  "payload": {
+    "frame_ref": "frames/demo/person_001.jpg",
+    "camera_id": "cam_101",
+    "captured_at": "2026-03-17T15:30:45.123Z",
+    "quality_metadata": {
+      "overall_blur": 0.12,
+      "exposure_score": 0.85
+    }
+  },
+  "context": {
+    "correlation_id": "corr_abc123",
+    "idempotency_key": "frame_cam101_20260317T153045123",
+    "organization_id": "org_demo",
+    "site_id": "site_centro"
+  }
+}
