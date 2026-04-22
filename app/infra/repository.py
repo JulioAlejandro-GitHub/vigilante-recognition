@@ -5,12 +5,18 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.models import EventOutbox, HumanTrack, ObservedSubject, RecognitionEvent
+from app.models import CameraRef, EventOutbox, HumanTrack, ObservedSubject, RecognitionEvent
 
 
 class RecognitionRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def resolve_camera_id(self, external_camera_key: str) -> str:
+        camera = self.session.query(CameraRef).filter_by(external_camera_key=external_camera_key).first()
+        if not camera:
+            raise ValueError(f"Camera mapping not found for {external_camera_key}")
+        return camera.camera_id
 
     def create_subject(self, first_seen_at: datetime) -> ObservedSubject:
         subject = ObservedSubject(
@@ -33,18 +39,16 @@ class RecognitionRepository:
             started_at=started_at,
             person_presence_score=0.0,
             face_available=False,
-            frame_count=0,
         )
         self.session.add(track)
         self.session.flush()
         return track
 
-    def update_track_presence(self, track: HumanTrack, *, increment_frames: int = 1, score_increment: float = 0.34) -> HumanTrack:
-        track.frame_count += increment_frames
+    def update_track_presence(self, track: HumanTrack, *, score_increment: float = 0.34) -> HumanTrack:
         track.person_presence_score = min(1.0, track.person_presence_score + score_increment)
-        if track.frame_count >= 1:
+        if track.person_presence_score > 0.0:
             track.track_status = "probable_human"
-        if track.frame_count >= 3:
+        if track.person_presence_score >= 0.6:
             track.track_status = "confirmed_human"
         self.session.add(track)
         self.session.flush()

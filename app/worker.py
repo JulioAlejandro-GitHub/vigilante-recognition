@@ -27,6 +27,9 @@ def process_fixture(fixture_path: str) -> dict:
 
         subject, track = track_service.open_track_from_frame(message)
 
+        repo.update_track_presence(track)
+        repo.update_track_presence(track)
+
         decision = presence_service.decide(track)
         event = build_recognition_event(
             event_type=decision.event_type,
@@ -42,7 +45,7 @@ def process_fixture(fixture_path: str) -> dict:
         repo.add_recognition_event(
             subject_id=subject.observed_subject_id,
             track_id=track.human_track_id,
-            camera_id=message.camera_id,
+            camera_id=track.camera_id,
             event_type=decision.event_type,
             event_ts=message.captured_at,
             severity=decision.severity,
@@ -70,6 +73,16 @@ def main() -> None:
 
     configure_logging(settings.log_level)
     init_db()
+
+    from app.models import CameraRef
+    from uuid import uuid4
+
+    # Seed dummy camera_ref for tests/fixtures
+    with get_session() as session:
+        if not session.query(CameraRef).filter_by(external_camera_key="cam_101").first():
+            session.add(CameraRef(camera_id=str(uuid4()), external_camera_key="cam_101"))
+            session.commit()
+
     event = process_fixture(args.fixture)
     logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
 

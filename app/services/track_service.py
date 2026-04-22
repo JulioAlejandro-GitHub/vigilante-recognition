@@ -9,9 +9,10 @@ class TrackService:
         self.repo = repo
 
     def open_track_from_frame(self, message: FrameIngestedMessage):
+        camera_id = self.repo.resolve_camera_id(message.camera_id)
         subject = self.repo.create_subject(first_seen_at=message.captured_at)
         track = self.repo.create_track(
-            camera_id=message.camera_id,
+            camera_id=camera_id,
             subject_id=subject.observed_subject_id,
             started_at=message.captured_at,
             external_track_key=message.context.get("correlation_id"),

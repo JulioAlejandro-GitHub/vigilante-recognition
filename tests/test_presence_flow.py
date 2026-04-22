@@ -4,14 +4,13 @@ from app.services.presence_service import PresenceService
 
 
 class DummyTrack:
-    def __init__(self, frame_count: int, person_presence_score: float) -> None:
-        self.frame_count = frame_count
+    def __init__(self, person_presence_score: float) -> None:
         self.person_presence_score = person_presence_score
 
 
 def test_presence_detected_after_threshold():
     service = PresenceService()
-    decision = service.decide(DummyTrack(frame_count=3, person_presence_score=0.9))
+    decision = service.decide(DummyTrack(person_presence_score=0.9))
     assert decision is not None
     assert decision.event_type == "human_presence_detected"
     assert decision.severity == "medium"
@@ -20,7 +19,7 @@ def test_presence_detected_after_threshold():
 
 def test_presence_no_face_before_threshold():
     service = PresenceService()
-    decision = service.decide(DummyTrack(frame_count=1, person_presence_score=0.5))
+    decision = service.decide(DummyTrack(person_presence_score=0.5))
     assert decision.event_type == "human_presence_no_face"
     assert decision.severity == "low"
     assert decision.confidence == 0.5

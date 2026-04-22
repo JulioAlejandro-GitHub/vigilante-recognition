@@ -7,13 +7,13 @@ from app.models import HumanTrack
 
 class PresenceService:
     def decide(self, track: HumanTrack) -> PresenceDecision:
-        if track.frame_count >= settings.presence_confirmation_frames:
+        if track.person_presence_score >= 0.6:
             return PresenceDecision(
                 event_type="human_presence_detected",
                 severity="medium",
                 confidence=min(1.0, track.person_presence_score),
                 decision_reason=[
-                    "presence_frames_threshold_reached",
+                    "presence_score_threshold_reached",
                     "human_track_confirmed",
                 ],
             )
