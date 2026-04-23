@@ -47,10 +47,12 @@ def _configure_repo_for_slice3_flow(mock_repo_instance, *, subject, track, recog
     mock_repo_instance.update_subject_face_profile.return_value = subject
     mock_repo_instance.load_known_face_gallery_entries.return_value = []
     mock_repo_instance.load_recent_subject_candidates.return_value = []
+    mock_repo_instance.find_latest_cross_camera_correlation_for_source_track.return_value = None
     mock_repo_instance.mark_subject_continuity.return_value = subject
     mock_repo_instance.add_cross_camera_correlation.return_value = MagicMock(spec=CrossCameraCorrelation)
     mock_repo_instance.attach_subject_to_track.return_value = track
     mock_repo_instance.touch_subject.return_value = subject
+    mock_repo_instance.update_track_continuity_resolution.return_value = track
 
 
 def test_fixture_loads():
@@ -178,8 +180,129 @@ def test_process_fixture_reuses_existing_track(mock_get_session, mock_repo_class
     mock_repo_instance.touch_subject.assert_called_once()
     mock_repo_instance.update_track_face_observation.assert_called_once()
     mock_repo_instance.update_track_match_result.assert_called_once()
+    mock_repo_instance.add_cross_camera_correlation.assert_not_called()
+    mock_repo_instance.mark_subject_continuity.assert_not_called()
     assert mock_repo_instance.add_outbox_event.call_args.kwargs["aggregate_id"] == recognition_event_id
     mock_session.commit.assert_called_once()
+
+
+@patch("app.worker.RecognitionRepository")
+@patch("app.worker.get_session")
+def test_process_fixture_existing_identified_track_skips_continuity_re_evaluation(mock_get_session, mock_repo_class):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    mock_repo_instance = MagicMock()
+    resolved_camera_id = UUID(CAMERA_ID)
+    subject_id = uuid4()
+    track_id = uuid4()
+    recognition_event_id = uuid4()
+
+    subject = MagicMock()
+    subject.observed_subject_id = subject_id
+
+    track = MagicMock()
+    track.human_track_id = track_id
+    track.camera_id = resolved_camera_id
+    track.observed_subject_id = subject_id
+    track.person_presence_score = 0.0
+
+    _configure_repo_for_slice3_flow(
+        mock_repo_instance,
+        subject=subject,
+        track=track,
+        recognition_event=_make_recognition_event(recognition_event_id),
+        existing_track=True,
+    )
+    mock_repo_class.return_value = mock_repo_instance
+
+    with patch("app.worker.CrossCameraCorrelationService") as mock_cross_service_class, patch(
+        "app.worker.ConflictResolutionService"
+    ) as mock_conflict_service_class:
+        event = process_fixture("tests/fixtures/frame_ingested_identified.json")
+
+    assert event["event_type"] == "face_detected_identified"
+    assert event["payload"]["identified"] is True
+    assert "continuity_status" not in event["payload"]
+    mock_cross_service_class.return_value.evaluate.assert_not_called()
+    mock_conflict_service_class.return_value.resolve.assert_not_called()
+    mock_repo_instance.add_cross_camera_correlation.assert_not_called()
+    mock_repo_instance.mark_subject_continuity.assert_not_called()
+    assert mock_repo_instance.add_outbox_event.call_args.kwargs["aggregate_id"] == recognition_event_id
+
+
+@patch("app.worker.RecognitionRepository")
+@patch("app.worker.get_session")
+def test_process_fixture_existing_cross_camera_track_reuses_persisted_continuity(mock_get_session, mock_repo_class):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    mock_repo_instance = MagicMock()
+    subject_id = uuid4()
+    track_id = uuid4()
+    recognition_event_id = uuid4()
+    target_subject_id = uuid4()
+
+    subject = MagicMock()
+    subject.observed_subject_id = subject_id
+
+    track = MagicMock()
+    track.human_track_id = track_id
+    track.camera_id = UUID(CAMERA_B_ID)
+    track.observed_subject_id = subject_id
+    track.person_presence_score = 0.0
+    track.track_metadata = {}
+
+    fixture = load_fixture_message("tests/fixtures/frame_cross_camera_positive.json")
+    correlation = MagicMock()
+    correlation.correlation_status = "auto"
+    correlation.aggregate_score = 0.985
+    correlation.target_subject_id = target_subject_id
+    correlation.target_track_id = uuid4()
+    correlation.created_at = fixture.captured_at
+    correlation.signals_json = {
+        "source_subject_id": str(subject_id),
+        "target_subject_id": str(target_subject_id),
+        "cross_camera_assessment": {
+            "current_subject_id": str(subject_id),
+            "current_track_id": str(track_id),
+            "current_camera_id": CAMERA_B_ID,
+            "threshold": 0.85,
+            "manual_review_threshold": 0.35,
+            "second_best_margin_threshold": 0.05,
+            "evaluated_candidates": 1,
+            "decision_reason": ["cross_camera_candidate_above_threshold"],
+        },
+    }
+
+    _configure_repo_for_slice3_flow(
+        mock_repo_instance,
+        subject=subject,
+        track=track,
+        recognition_event=_make_recognition_event(recognition_event_id),
+        existing_track=True,
+    )
+    mock_repo_instance.find_latest_cross_camera_correlation_for_source_track.return_value = correlation
+    mock_repo_instance.add_recognition_event.side_effect = [
+        _make_recognition_event(recognition_event_id),
+        _make_recognition_event(),
+    ]
+    mock_repo_class.return_value = mock_repo_instance
+
+    with patch("app.worker.CrossCameraCorrelationService") as mock_cross_service_class, patch(
+        "app.worker.ConflictResolutionService"
+    ) as mock_conflict_service_class:
+        event = process_fixture("tests/fixtures/frame_cross_camera_positive.json")
+
+    assert event["event_type"] == "face_detected_identified"
+    assert event["payload"]["continuity_status"] == "correlated"
+    mock_cross_service_class.return_value.evaluate.assert_not_called()
+    mock_conflict_service_class.return_value.resolve.assert_not_called()
+    assert [call.kwargs["event_type"] for call in mock_repo_instance.add_recognition_event.call_args_list] == [
+        "face_detected_identified",
+        "cross_camera_subject_correlated",
+    ]
+    mock_repo_instance.add_cross_camera_correlation.assert_not_called()
 
 
 @patch("app.worker.RecognitionRepository")

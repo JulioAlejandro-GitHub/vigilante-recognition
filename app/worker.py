@@ -35,7 +35,7 @@ def process_fixture(fixture_path: str) -> dict:
         conflict_service = ConflictResolutionService()
         publisher = EventPublisher()
 
-        subject, track = track_service.open_track_from_frame(message)
+        subject, track, is_new_appearance = track_service.open_track_from_frame(message)
         track = track_service.confirm_basic_presence(track)
         face_detection = presence_service.inspect_face(
             frame_ref=message.frame_ref,
@@ -64,45 +64,56 @@ def process_fixture(fixture_path: str) -> dict:
                 match_result=match_result,
                 matched_at=message.captured_at,
             )
-            assessment = cross_camera_service.evaluate(
-                current_subject=subject,
-                current_track=track,
-                observed_at=message.captured_at,
-                current_camera_id=track.camera_id,
-                embedding_result=embedding_result,
-                match_result=match_result,
-            )
-            continuity_resolution = conflict_service.resolve(
-                current_subject=subject,
-                current_track=track,
-                assessment=assessment,
-                match_result=match_result,
-            )
-
-            best_candidate = assessment.best_candidate
-            if continuity_resolution.outcome == "correlated" and best_candidate is not None:
-                repo.add_cross_camera_correlation(
-                    source_subject_id=subject.observed_subject_id,
-                    target_subject_id=UUID(best_candidate.observed_subject_id),
-                    source_track_id=track.human_track_id,
-                    target_track_id=UUID(best_candidate.latest_track_id) if best_candidate.latest_track_id else None,
-                    correlation_status=continuity_resolution.correlation_status or "auto",
-                    face_similarity_score=best_candidate.face_similarity_score,
-                    temporal_coherence_score=best_candidate.temporal_coherence_score,
-                    aggregate_score=best_candidate.aggregate_score,
-                    signals_json=continuity_resolution.payload,
+            if is_new_appearance:
+                assessment = cross_camera_service.evaluate(
+                    current_subject=subject,
+                    current_track=track,
+                    observed_at=message.captured_at,
+                    current_camera_id=track.camera_id,
+                    embedding_result=embedding_result,
+                    match_result=match_result,
                 )
-                target_subject = repo.get_subject(UUID(best_candidate.observed_subject_id))
-                if target_subject is not None:
-                    target_subject, track = track_service.link_track_to_subject(
-                        track=track,
-                        source_subject=subject,
-                        target_subject=target_subject,
-                        resolved_at=message.captured_at,
-                        payload=continuity_resolution.payload,
+                continuity_resolution = conflict_service.resolve(
+                    current_subject=subject,
+                    current_track=track,
+                    assessment=assessment,
+                    match_result=match_result,
+                )
+
+                best_candidate = assessment.best_candidate
+                if continuity_resolution.outcome == "correlated" and best_candidate is not None:
+                    repo.add_cross_camera_correlation(
+                        source_subject_id=subject.observed_subject_id,
+                        target_subject_id=UUID(best_candidate.observed_subject_id),
+                        source_track_id=track.human_track_id,
+                        target_track_id=UUID(best_candidate.latest_track_id) if best_candidate.latest_track_id else None,
+                        correlation_status=continuity_resolution.correlation_status or "auto",
+                        face_similarity_score=best_candidate.face_similarity_score,
+                        temporal_coherence_score=best_candidate.temporal_coherence_score,
+                        aggregate_score=best_candidate.aggregate_score,
+                        signals_json=continuity_resolution.payload,
                     )
+                    target_subject = repo.get_subject(UUID(best_candidate.observed_subject_id))
+                    if target_subject is not None:
+                        target_subject, track = track_service.link_track_to_subject(
+                            track=track,
+                            source_subject=subject,
+                            target_subject=target_subject,
+                            resolved_at=message.captured_at,
+                            payload=continuity_resolution.payload,
+                        )
+                        subject = track_service.update_subject_face_profile(
+                            subject=target_subject,
+                            camera_id=track.camera_id,
+                            observed_at=message.captured_at,
+                            frame_ref=message.frame_ref,
+                            face_detection=face_detection,
+                            embedding_result=embedding_result,
+                            match_result=match_result,
+                        )
+                else:
                     subject = track_service.update_subject_face_profile(
-                        subject=target_subject,
+                        subject=subject,
                         camera_id=track.camera_id,
                         observed_at=message.captured_at,
                         frame_ref=message.frame_ref,
@@ -110,7 +121,35 @@ def process_fixture(fixture_path: str) -> dict:
                         embedding_result=embedding_result,
                         match_result=match_result,
                     )
+                    if continuity_resolution and continuity_resolution.assessment and best_candidate is not None and continuity_resolution.outcome in {
+                        "identity_conflict",
+                        "manual_review_required",
+                    }:
+                        repo.add_cross_camera_correlation(
+                            source_subject_id=subject.observed_subject_id,
+                            target_subject_id=UUID(best_candidate.observed_subject_id),
+                            source_track_id=track.human_track_id,
+                            target_track_id=UUID(best_candidate.latest_track_id) if best_candidate.latest_track_id else None,
+                            correlation_status=continuity_resolution.correlation_status or "pending_review",
+                            face_similarity_score=best_candidate.face_similarity_score,
+                            temporal_coherence_score=best_candidate.temporal_coherence_score,
+                            aggregate_score=best_candidate.aggregate_score,
+                            signals_json=continuity_resolution.payload,
+                        )
+                        repo.mark_subject_continuity(
+                            subject,
+                            outcome=continuity_resolution.outcome,
+                            resolved_at=message.captured_at,
+                            payload=continuity_resolution.payload,
+                        )
+                if continuity_resolution and continuity_resolution.outcome != "none":
+                    track = track_service.record_continuity_resolution(
+                        track=track,
+                        continuity_resolution=continuity_resolution,
+                        resolved_at=message.captured_at,
+                    )
             else:
+                continuity_resolution = track_service.load_continuity_resolution(track=track)
                 subject = track_service.update_subject_face_profile(
                     subject=subject,
                     camera_id=track.camera_id,
@@ -120,27 +159,6 @@ def process_fixture(fixture_path: str) -> dict:
                     embedding_result=embedding_result,
                     match_result=match_result,
                 )
-                if continuity_resolution and continuity_resolution.assessment and best_candidate is not None and continuity_resolution.outcome in {
-                    "identity_conflict",
-                    "manual_review_required",
-                }:
-                    repo.add_cross_camera_correlation(
-                        source_subject_id=subject.observed_subject_id,
-                        target_subject_id=UUID(best_candidate.observed_subject_id),
-                        source_track_id=track.human_track_id,
-                        target_track_id=UUID(best_candidate.latest_track_id) if best_candidate.latest_track_id else None,
-                        correlation_status=continuity_resolution.correlation_status or "pending_review",
-                        face_similarity_score=best_candidate.face_similarity_score,
-                        temporal_coherence_score=best_candidate.temporal_coherence_score,
-                        aggregate_score=best_candidate.aggregate_score,
-                        signals_json=continuity_resolution.payload,
-                    )
-                    repo.mark_subject_continuity(
-                        subject,
-                        outcome=continuity_resolution.outcome,
-                        resolved_at=message.captured_at,
-                        payload=continuity_resolution.payload,
-                    )
         else:
             subject = track_service.update_subject_face_profile(
                 subject=subject,

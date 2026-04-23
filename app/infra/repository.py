@@ -249,6 +249,14 @@ class RecognitionRepository:
         )
         return self.session.execute(statement).scalars().first()
 
+    def find_latest_cross_camera_correlation_for_source_track(self, source_track_id: UUID) -> Optional[CrossCameraCorrelation]:
+        statement = (
+            select(CrossCameraCorrelation)
+            .where(CrossCameraCorrelation.source_track_id == source_track_id)
+            .order_by(CrossCameraCorrelation.created_at.desc())
+        )
+        return self.session.execute(statement).scalars().first()
+
     def load_recent_subject_candidates(
         self,
         *,
@@ -334,6 +342,19 @@ class RecognitionRepository:
         self.session.add(correlation)
         self.session.flush()
         return correlation
+
+    def update_track_continuity_resolution(
+        self,
+        track: HumanTrack,
+        *,
+        continuity_resolution: dict[str, Any],
+    ) -> HumanTrack:
+        metadata = dict(track.track_metadata or {})
+        metadata["continuity_resolution"] = continuity_resolution
+        track.track_metadata = metadata
+        self.session.add(track)
+        self.session.flush()
+        return track
 
     def load_known_face_gallery_entries(self, *, embedding_backend: str) -> list[KnownFaceGalleryEntry]:
         statement = text(
