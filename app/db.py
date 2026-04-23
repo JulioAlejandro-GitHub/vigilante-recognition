@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
@@ -15,9 +15,9 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expi
 
 
 def init_db() -> None:
-    # Import models so they are registered with Base.metadata
-    import app.models  # noqa: F401
-    Base.metadata.create_all(bind=engine)
+    # Validate connectivity without mutating the installed schema.
+    with engine.connect() as connection:
+        connection.execute(text("SELECT 1"))
 
 
 def get_session():

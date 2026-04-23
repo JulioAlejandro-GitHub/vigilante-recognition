@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     observation_window_seconds: int = 15
     presence_confirmation_frames: int = 3
+    face_quality_threshold: float = 0.75
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

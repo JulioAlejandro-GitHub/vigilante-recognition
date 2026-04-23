@@ -6,6 +6,7 @@ import logging
 from app.config import settings
 from app.consumer import load_fixture_message
 from app.db import get_session, init_db
+from app.domain.entities import InvalidCameraIdError
 from app.domain.events import build_recognition_event
 from app.infra.repository import RecognitionRepository
 from app.logging import configure_logging
@@ -26,23 +27,31 @@ def process_fixture(fixture_path: str) -> dict:
         publisher = EventPublisher()
 
         subject, track = track_service.open_track_from_frame(message)
-
-        repo.update_track_presence(track)
-        repo.update_track_presence(track)
-
-        decision = presence_service.decide(track)
+        track = track_service.confirm_basic_presence(track)
+        decision, face_detection = presence_service.decide(
+            track=track,
+            frame_ref=message.frame_ref,
+            quality_metadata=message.payload.quality_metadata,
+        )
+        track_service.register_face_observation(
+            track=track,
+            face_detection=face_detection,
+            frame_ref=message.frame_ref,
+            detected_at=message.captured_at,
+        )
         event = build_recognition_event(
             event_type=decision.event_type,
-            camera_id=message.camera_id,
+            camera_id=track.camera_id,
             track_id=track.human_track_id,
             subject_id=subject.observed_subject_id,
             severity=decision.severity,
             confidence=decision.confidence,
             decision_reason=decision.decision_reason,
             frame_ref=message.frame_ref,
+            payload_details=decision.payload,
         )
 
-        repo.add_recognition_event(
+        recognition_event = repo.add_recognition_event(
             subject_id=subject.observed_subject_id,
             track_id=track.human_track_id,
             camera_id=track.camera_id,
@@ -50,13 +59,13 @@ def process_fixture(fixture_path: str) -> dict:
             event_ts=message.captured_at,
             severity=decision.severity,
             confidence=decision.confidence,
-            decision_reason={"reasons": decision.decision_reason},
-            evidence_refs={"frames": [message.frame_ref]},
+            decision_reason=decision.decision_reason,
+            evidence_refs=[message.frame_ref],
             payload=event["payload"],
         )
         repo.add_outbox_event(
             aggregate_type="recognition_event",
-            aggregate_id=track.human_track_id,
+            aggregate_id=recognition_event.recognition_event_id,
             event_type=decision.event_type,
             payload=event,
         )
@@ -67,23 +76,18 @@ def process_fixture(fixture_path: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 1")
+    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 2")
     parser.add_argument("--fixture", required=True, help="Path to frame.ingested example JSON")
     args = parser.parse_args()
 
     configure_logging(settings.log_level)
     init_db()
+    try:
+        event = process_fixture(args.fixture)
+    except InvalidCameraIdError as exc:
+        logger.error("worker_failed reason=%s", exc)
+        raise SystemExit(2) from exc
 
-    from app.models import CameraRef
-    from uuid import uuid4
-
-    # Seed dummy camera_ref for tests/fixtures
-    with get_session() as session:
-        if not session.query(CameraRef).filter_by(external_camera_key="cam_101").first():
-            session.add(CameraRef(camera_id=str(uuid4()), external_camera_key="cam_101"))
-            session.commit()
-
-    event = process_fixture(args.fixture)
     logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
 
 
