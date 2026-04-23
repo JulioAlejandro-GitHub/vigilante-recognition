@@ -1,0 +1,23 @@
+{
+  "event_id": "evt_ing_007",
+  "event_type": "frame.ingested",
+  "event_version": "1.0",
+  "occurred_at": "2026-03-17T15:36:45.123Z",
+  "payload": {
+    "frame_ref": "tests/fixtures/images/face_manual_review.jpg",
+    "camera_id": "44444444-1111-1111-1111-111111111111",
+    "external_camera_key": "cam_404",
+    "captured_at": "2026-03-17T15:36:45.123Z",
+    "quality_metadata": {
+      "overall_blur": 0.16,
+      "exposure_score": 0.88
+    }
+  },
+  "context": {
+    "correlation_id": "corr_manual_review",
+    "idempotency_key": "frame_camera_uuid_20260317T153645123",
+    "organization_id": "org_demo",
+    "site_id": "site_sur",
+    "dev_known_face_gallery_path": "app/data/dev_known_face_gallery_obama_only.json"
+  }
+}

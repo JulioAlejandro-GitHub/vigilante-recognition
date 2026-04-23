@@ -5,7 +5,7 @@ from pathlib import Path
 import cv2
 
 from app.config import settings
-from app.domain.entities import FaceDetectionResult, PresenceDecision
+from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult, FaceMatchResult, PresenceDecision
 from app.models import HumanTrack
 
 
@@ -16,44 +16,116 @@ class PresenceService:
         if self.face_cascade.empty():
             raise RuntimeError(f"Unable to load Haar cascade from {cascade_path}")
 
+    def inspect_face(
+        self,
+        *,
+        frame_ref: str,
+        quality_metadata: dict[str, float] | None = None,
+    ) -> FaceDetectionResult:
+        return self.detect_face(frame_ref=frame_ref, quality_metadata=quality_metadata or {})
+
     def decide(
         self,
         *,
         track: HumanTrack,
-        frame_ref: str,
-        quality_metadata: dict[str, float] | None = None,
-    ) -> tuple[PresenceDecision, FaceDetectionResult]:
-        face_detection = self.detect_face(frame_ref=frame_ref, quality_metadata=quality_metadata or {})
-
-        if face_detection.usable:
-            return PresenceDecision(
-                event_type="face_detected_unidentified",
-                severity="medium",
-                confidence=face_detection.quality_score,
-                decision_reason=[
-                    "human_track_confirmed",
-                    "face_detected",
-                    "face_quality_threshold_passed",
-                ],
-                payload={
-                    "face_detection": self._serialize_face_detection(face_detection),
-                    "unidentified": True,
-                },
-            ), face_detection
-
+        face_detection: FaceDetectionResult,
+        embedding_result: FaceEmbeddingResult | None = None,
+        match_result: FaceMatchResult | None = None,
+    ) -> PresenceDecision:
         decision_reason = ["human_track_confirmed"]
-        if face_detection.detected:
-            decision_reason.append("face_quality_threshold_failed")
-        else:
-            decision_reason.extend(face_detection.rejection_reasons or ["face_not_detected"])
+        serialized_detection = self._serialize_face_detection(face_detection)
+
+        if not face_detection.usable:
+            if face_detection.detected:
+                decision_reason.append("face_quality_threshold_failed")
+            else:
+                decision_reason.extend(face_detection.rejection_reasons or ["face_not_detected"])
+
+            return PresenceDecision(
+                event_type="human_presence_no_face",
+                severity="low",
+                confidence=min(1.0, max(0.5, track.person_presence_score or 0.0)),
+                decision_reason=decision_reason,
+                payload={"face_detection": serialized_detection},
+            )
+
+        decision_reason.extend(
+            [
+                "face_detected",
+                "face_quality_threshold_passed",
+            ]
+        )
+        payload = {
+            "face_detection": serialized_detection,
+            "embedding_backend": embedding_result.backend if embedding_result else settings.embedding_backend,
+            "embedding_dimensions": embedding_result.dimensions if embedding_result else 0,
+            "identified": False,
+        }
+
+        if embedding_result and embedding_result.generated:
+            decision_reason.append("embedding_generated")
+        elif embedding_result:
+            decision_reason.extend(embedding_result.rejection_reasons or ["embedding_not_generated"])
+
+        if match_result and match_result.identified and match_result.best_match is not None:
+            decision_reason.extend(
+                [
+                    "gallery_match_threshold_passed",
+                    "second_best_margin_passed",
+                    "known_identity_resolved",
+                ]
+            )
+            payload.update(
+                {
+                    "identified": True,
+                    "person_profile_id": match_result.best_match.person_profile_id,
+                    "external_person_key": match_result.best_match.external_person_key,
+                    "match_confidence": match_result.match_confidence,
+                    "matching_strategy": match_result.matching_strategy,
+                    "matched_person": {
+                        "full_name": match_result.best_match.full_name,
+                        "person_type": match_result.best_match.person_type,
+                        "risk_level": match_result.best_match.risk_level,
+                        "gallery_source": match_result.best_match.gallery_source,
+                    },
+                }
+            )
+            return PresenceDecision(
+                event_type="face_detected_identified",
+                severity="medium",
+                confidence=match_result.match_confidence,
+                decision_reason=decision_reason,
+                payload=payload,
+            )
+
+        if match_result:
+            decision_reason.extend(match_result.rejection_reasons or ["match_not_confident"])
+            payload.update(
+                {
+                    "match_confidence": match_result.match_confidence,
+                    "matching_strategy": match_result.matching_strategy,
+                    "best_similarity": match_result.best_similarity,
+                    "second_best_similarity": match_result.second_best_similarity,
+                    "second_best_margin": match_result.second_best_margin,
+                    "evaluated_candidates": match_result.evaluated_candidates,
+                }
+            )
+            if match_result.best_match is not None:
+                payload["best_candidate"] = {
+                    "person_profile_id": match_result.best_match.person_profile_id,
+                    "full_name": match_result.best_match.full_name,
+                    "external_person_key": match_result.best_match.external_person_key,
+                    "similarity": match_result.best_match.similarity,
+                    "gallery_source": match_result.best_match.gallery_source,
+                }
 
         return PresenceDecision(
-            event_type="human_presence_no_face",
-            severity="low",
-            confidence=min(1.0, max(0.5, track.person_presence_score or 0.0)),
+            event_type="face_detected_unidentified",
+            severity="medium",
+            confidence=face_detection.quality_score,
             decision_reason=decision_reason,
-            payload={"face_detection": self._serialize_face_detection(face_detection)},
-        ), face_detection
+            payload=payload,
+        )
 
     def detect_face(
         self,

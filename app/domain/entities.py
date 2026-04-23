@@ -66,3 +66,99 @@ class FaceDetectionResult(BaseModel):
     rejection_reasons: list[str] = Field(default_factory=list)
     quality_metrics: dict[str, float] = Field(default_factory=dict)
     frame_quality_metadata: dict[str, float] = Field(default_factory=dict)
+
+
+class FaceEmbeddingResult(BaseModel):
+    generated: bool = False
+    backend: str
+    dimensions: int = 0
+    vector: list[float] = Field(default_factory=list)
+    bbox: Optional[dict[str, int]] = None
+    source_frame_ref: Optional[str] = None
+    rejection_reasons: list[str] = Field(default_factory=list)
+
+
+class KnownFaceGalleryEntry(BaseModel):
+    person_profile_id: str
+    full_name: str
+    person_type: str
+    risk_level: str
+    external_person_key: Optional[str] = None
+    embedding: list[float] = Field(default_factory=list)
+    embedding_backend: Optional[str] = None
+    source_image_ref: Optional[str] = None
+    gallery_source: str = "database_projection"
+
+
+class FaceMatchCandidate(BaseModel):
+    person_profile_id: str
+    full_name: str
+    person_type: str
+    risk_level: str
+    similarity: float
+    gallery_source: str
+    external_person_key: Optional[str] = None
+
+
+class FaceMatchResult(BaseModel):
+    identified: bool = False
+    match_confidence: float = 0.0
+    matching_strategy: str
+    threshold: float
+    second_best_margin_threshold: float
+    evaluated_candidates: int = 0
+    gallery_source: str = "none"
+    best_match: Optional[FaceMatchCandidate] = None
+    second_best_match: Optional[FaceMatchCandidate] = None
+    best_similarity: float = 0.0
+    second_best_similarity: float = 0.0
+    second_best_margin: float = 0.0
+    rejection_reasons: list[str] = Field(default_factory=list)
+
+
+class CrossCameraCandidate(BaseModel):
+    observed_subject_id: str
+    latest_track_id: Optional[str] = None
+    last_camera_id: Optional[str] = None
+    last_seen_at: datetime
+    recurrence_count: int = 1
+    face_similarity_score: float
+    temporal_coherence_score: float
+    camera_switch_score: float
+    aggregate_score: float
+    resolved_identity: dict[str, Any] = Field(default_factory=dict)
+
+
+class CrossCameraAssessment(BaseModel):
+    current_subject_id: str
+    current_track_id: str
+    current_camera_id: str
+    threshold: float
+    manual_review_threshold: float
+    second_best_margin_threshold: float
+    evaluated_candidates: int = 0
+    best_candidate: Optional[CrossCameraCandidate] = None
+    second_best_candidate: Optional[CrossCameraCandidate] = None
+    second_best_margin: float = 0.0
+    decision_reason: list[str] = Field(default_factory=list)
+
+
+class SupplementalRecognitionDecision(BaseModel):
+    event_type: str
+    severity: str
+    confidence: float
+    decision_reason: list[str]
+    payload: dict[str, Any] = Field(default_factory=dict)
+    subject_id: Optional[str] = None
+
+
+class ContinuityResolution(BaseModel):
+    outcome: str = "none"
+    subject_id_to_use: Optional[str] = None
+    target_track_id: Optional[str] = None
+    correlation_status: Optional[str] = None
+    requires_human_review: bool = False
+    decision_reason: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    assessment: Optional[CrossCameraAssessment] = None
+    supplemental_decisions: list[SupplementalRecognitionDecision] = Field(default_factory=list)

@@ -1,0 +1,21 @@
+{
+  "version": "slice3-dev-gallery-v1",
+  "entries": [
+    {
+      "person_profile_id": "22222222-2222-2222-2222-222222222222",
+      "external_person_key": "dev_obama_001",
+      "full_name": "Barack Obama (dev fixture)",
+      "person_type": "employee",
+      "risk_level": "low",
+      "source_image_ref": "tests/fixtures/images/face_identified.jpg"
+    },
+    {
+      "person_profile_id": "33333333-3333-3333-3333-333333333333",
+      "external_person_key": "dev_biden_001",
+      "full_name": "Joe Biden (dev fixture)",
+      "person_type": "employee",
+      "risk_level": "low",
+      "source_image_ref": "tests/fixtures/images/gallery_known_biden.jpg"
+    }
+  ]
+}

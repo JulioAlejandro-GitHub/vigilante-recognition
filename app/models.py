@@ -80,3 +80,25 @@ class EventOutbox(Base):
     publish_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     publish_status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'pending'::text"))
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class CrossCameraCorrelation(Base):
+    __tablename__ = "cross_camera_correlation"
+    __table_args__ = {"schema": "recognition"}
+
+    cross_camera_correlation_id: Mapped[PyUUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    source_subject_id: Mapped[PyUUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    target_subject_id: Mapped[PyUUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    source_track_id: Mapped[Optional[PyUUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+    target_track_id: Mapped[Optional[PyUUID]] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+    correlation_status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'auto'::text"))
+    face_similarity_score: Mapped[Optional[float]] = mapped_column(Numeric(asdecimal=False), nullable=True)
+    appearance_similarity_score: Mapped[Optional[float]] = mapped_column(Numeric(asdecimal=False), nullable=True)
+    semantic_similarity_score: Mapped[Optional[float]] = mapped_column(Numeric(asdecimal=False), nullable=True)
+    temporal_coherence_score: Mapped[Optional[float]] = mapped_column(Numeric(asdecimal=False), nullable=True)
+    spatial_coherence_score: Mapped[Optional[float]] = mapped_column(Numeric(asdecimal=False), nullable=True)
+    aggregate_score: Mapped[float] = mapped_column(Numeric(asdecimal=False), nullable=False)
+    signals_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    reviewed_by: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=text("now()"))

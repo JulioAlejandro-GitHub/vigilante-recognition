@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     observation_window_seconds: int = 15
     presence_confirmation_frames: int = 3
     face_quality_threshold: float = 0.75
+    face_match_threshold: float = 0.82
+    second_best_margin: float = 0.05
+    embedding_backend: str = "simple_face_crop_512"
+    known_face_gallery_path: str = "app/data/dev_known_face_gallery.json"
+    cross_camera_match_threshold: float = 0.85
+    cross_camera_time_window_seconds: int = 600
+    identity_conflict_margin: float = 0.25
+    manual_review_threshold: float = 0.35
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

@@ -1,0 +1,13 @@
+{
+  "version": "slice4-dev-gallery-conflict-v1",
+  "entries": [
+    {
+      "person_profile_id": "44444444-4444-4444-4444-444444444444",
+      "external_person_key": "dev_conflict_identity_001",
+      "full_name": "Conflict Identity (dev fixture)",
+      "person_type": "employee",
+      "risk_level": "medium",
+      "source_image_ref": "tests/fixtures/images/face_identified.jpg"
+    }
+  ]
+}

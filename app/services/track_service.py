@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from app.config import settings
-from app.domain.entities import FaceDetectionResult, FrameIngestedMessage
+from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult, FaceMatchResult, FrameIngestedMessage
 from app.infra.repository import RecognitionRepository
 
 
@@ -55,3 +55,61 @@ class TrackService:
             frame_ref=frame_ref,
             detected_at=detected_at,
         )
+
+    def register_face_match(
+        self,
+        *,
+        track,
+        match_result: FaceMatchResult,
+        matched_at: datetime,
+    ):
+        return self.repo.update_track_match_result(
+            track,
+            match_result=match_result,
+            matched_at=matched_at,
+        )
+
+    def update_subject_face_profile(
+        self,
+        *,
+        subject,
+        camera_id,
+        observed_at: datetime,
+        frame_ref: str,
+        face_detection: FaceDetectionResult,
+        embedding_result: FaceEmbeddingResult | None = None,
+        match_result: FaceMatchResult | None = None,
+    ):
+        return self.repo.update_subject_face_profile(
+            subject,
+            camera_id=camera_id,
+            observed_at=observed_at,
+            frame_ref=frame_ref,
+            face_detection=face_detection,
+            embedding_result=embedding_result,
+            match_result=match_result,
+        )
+
+    def link_track_to_subject(
+        self,
+        *,
+        track,
+        source_subject,
+        target_subject,
+        resolved_at: datetime,
+        payload: dict,
+    ):
+        self.repo.mark_subject_continuity(
+            source_subject,
+            outcome="correlated",
+            resolved_at=resolved_at,
+            payload=payload,
+        )
+        self.repo.attach_subject_to_track(track, subject_id=target_subject.observed_subject_id)
+        target_subject = self.repo.touch_subject(
+            target_subject,
+            seen_at=resolved_at,
+            camera_id=track.camera_id,
+            increment_recurrence=True,
+        )
+        return target_subject, track
