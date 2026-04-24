@@ -10,6 +10,8 @@ from app.domain.entities import (
     FaceEmbeddingResult,
     FaceMatchResult,
     FrameIngestedMessage,
+    RecurrentSubjectResolution,
+    SemanticDescriptorResult,
     SupplementalRecognitionDecision,
 )
 from app.infra.repository import RecognitionRepository
@@ -80,6 +82,19 @@ class TrackService:
             matched_at=matched_at,
         )
 
+    def register_semantic_descriptor(
+        self,
+        *,
+        track,
+        semantic_descriptor_result: SemanticDescriptorResult,
+        described_at: datetime,
+    ):
+        return self.repo.update_track_semantic_descriptor(
+            track,
+            semantic_descriptor_result=semantic_descriptor_result,
+            described_at=described_at,
+        )
+
     def update_subject_face_profile(
         self,
         *,
@@ -90,6 +105,7 @@ class TrackService:
         face_detection: FaceDetectionResult,
         embedding_result: FaceEmbeddingResult | None = None,
         match_result: FaceMatchResult | None = None,
+        semantic_descriptor_result: SemanticDescriptorResult | None = None,
     ):
         return self.repo.update_subject_face_profile(
             subject,
@@ -99,6 +115,7 @@ class TrackService:
             face_detection=face_detection,
             embedding_result=embedding_result,
             match_result=match_result,
+            semantic_descriptor_result=semantic_descriptor_result,
         )
 
     def link_track_to_subject(
@@ -109,10 +126,11 @@ class TrackService:
         target_subject,
         resolved_at: datetime,
         payload: dict,
+        outcome: str = "correlated",
     ):
         self.repo.mark_subject_continuity(
             source_subject,
-            outcome="correlated",
+            outcome=outcome,
             resolved_at=resolved_at,
             payload=payload,
         )
@@ -229,3 +247,33 @@ class TrackService:
             resolved_at=correlation.created_at,
         )
         return continuity_resolution
+
+    def record_recurrent_resolution(
+        self,
+        *,
+        track,
+        recurrent_resolution: RecurrentSubjectResolution,
+        resolved_at: datetime,
+    ):
+        serialized = {
+            "outcome": recurrent_resolution.outcome,
+            "subject_id_to_use": recurrent_resolution.subject_id_to_use,
+            "target_track_id": recurrent_resolution.target_track_id,
+            "requires_human_review": recurrent_resolution.requires_human_review,
+            "requires_case_evaluation": recurrent_resolution.requires_case_evaluation,
+            "decision_reason": recurrent_resolution.decision_reason,
+            "payload": recurrent_resolution.payload,
+            "assessment": recurrent_resolution.assessment.model_dump(mode="json") if recurrent_resolution.assessment else None,
+            "supplemental_decisions": [
+                supplemental.model_dump(mode="json") for supplemental in recurrent_resolution.supplemental_decisions
+            ],
+            "resolved_at": resolved_at.isoformat(),
+        }
+        return self.repo.update_track_recurrent_resolution(track, recurrent_resolution=serialized)
+
+    def load_recurrent_resolution(self, *, track):
+        metadata = dict(track.track_metadata or {})
+        stored = metadata.get("recurrent_resolution")
+        if stored:
+            return RecurrentSubjectResolution.model_validate(stored)
+        return None

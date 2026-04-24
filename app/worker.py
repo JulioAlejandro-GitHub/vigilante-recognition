@@ -17,6 +17,8 @@ from app.services.cross_camera_correlation_service import CrossCameraCorrelation
 from app.services.face_embedding_service import FaceEmbeddingService
 from app.services.face_matching_service import FaceMatchingService
 from app.services.presence_service import PresenceService
+from app.services.recurrent_subject_service import RecurrentSubjectService
+from app.services.semantic_descriptor_service import SemanticDescriptorService
 from app.services.track_service import TrackService
 
 logger = logging.getLogger(__name__)
@@ -33,6 +35,11 @@ def process_fixture(fixture_path: str) -> dict:
         matching_service = FaceMatchingService(repo=repo, embedding_service=embedding_service)
         cross_camera_service = CrossCameraCorrelationService(repo=repo)
         conflict_service = ConflictResolutionService()
+        semantic_descriptor_service = SemanticDescriptorService()
+        recurrent_subject_service = RecurrentSubjectService(
+            repo=repo,
+            semantic_descriptor_service=semantic_descriptor_service,
+        )
         publisher = EventPublisher()
 
         subject, track, is_new_appearance = track_service.open_track_from_frame(message)
@@ -49,7 +56,9 @@ def process_fixture(fixture_path: str) -> dict:
         )
         embedding_result = None
         match_result = None
+        semantic_descriptor_result = None
         continuity_resolution = None
+        recurrent_resolution = None
         if face_detection.usable:
             embedding_result = embedding_service.generate(
                 frame_ref=message.frame_ref,
@@ -64,6 +73,17 @@ def process_fixture(fixture_path: str) -> dict:
                 match_result=match_result,
                 matched_at=message.captured_at,
             )
+            if not match_result.identified:
+                semantic_descriptor_result = semantic_descriptor_service.generate(
+                    frame_ref=message.frame_ref,
+                    face_detection=face_detection,
+                )
+                if semantic_descriptor_result.generated:
+                    track = track_service.register_semantic_descriptor(
+                        track=track,
+                        semantic_descriptor_result=semantic_descriptor_result,
+                        described_at=message.captured_at,
+                    )
             if is_new_appearance:
                 assessment = cross_camera_service.evaluate(
                     current_subject=subject,
@@ -110,6 +130,7 @@ def process_fixture(fixture_path: str) -> dict:
                             face_detection=face_detection,
                             embedding_result=embedding_result,
                             match_result=match_result,
+                            semantic_descriptor_result=semantic_descriptor_result,
                         )
                 else:
                     subject = track_service.update_subject_face_profile(
@@ -120,6 +141,7 @@ def process_fixture(fixture_path: str) -> dict:
                         face_detection=face_detection,
                         embedding_result=embedding_result,
                         match_result=match_result,
+                        semantic_descriptor_result=semantic_descriptor_result,
                     )
                     if continuity_resolution and continuity_resolution.assessment and best_candidate is not None and continuity_resolution.outcome in {
                         "identity_conflict",
@@ -158,27 +180,94 @@ def process_fixture(fixture_path: str) -> dict:
                     face_detection=face_detection,
                     embedding_result=embedding_result,
                     match_result=match_result,
+                    semantic_descriptor_result=semantic_descriptor_result,
                 )
         else:
+            semantic_descriptor_result = semantic_descriptor_service.generate(
+                frame_ref=message.frame_ref,
+                face_detection=face_detection,
+            )
+            if semantic_descriptor_result.generated:
+                track = track_service.register_semantic_descriptor(
+                    track=track,
+                    semantic_descriptor_result=semantic_descriptor_result,
+                    described_at=message.captured_at,
+                )
             subject = track_service.update_subject_face_profile(
                 subject=subject,
                 camera_id=track.camera_id,
                 observed_at=message.captured_at,
                 frame_ref=message.frame_ref,
                 face_detection=face_detection,
+                semantic_descriptor_result=semantic_descriptor_result,
             )
+
+        unresolved_flow = semantic_descriptor_result is not None and semantic_descriptor_result.generated
+        if unresolved_flow and (continuity_resolution is None or continuity_resolution.outcome == "none"):
+            if is_new_appearance:
+                recurrent_assessment = recurrent_subject_service.evaluate(
+                    current_subject=subject,
+                    current_track=track,
+                    observed_at=message.captured_at,
+                    current_camera_id=track.camera_id,
+                    semantic_descriptor_result=semantic_descriptor_result,
+                    embedding_result=embedding_result,
+                )
+                recurrent_resolution = recurrent_subject_service.resolve(
+                    current_subject=subject,
+                    current_track=track,
+                    semantic_descriptor_result=semantic_descriptor_result,
+                    assessment=recurrent_assessment,
+                )
+                best_recurrent_candidate = recurrent_assessment.best_candidate
+                if recurrent_resolution.outcome == "recurrent_unresolved" and best_recurrent_candidate is not None:
+                    target_subject = repo.get_subject(UUID(best_recurrent_candidate.observed_subject_id))
+                    if target_subject is not None:
+                        target_subject, track = track_service.link_track_to_subject(
+                            track=track,
+                            source_subject=subject,
+                            target_subject=target_subject,
+                            resolved_at=message.captured_at,
+                            payload=recurrent_resolution.payload,
+                            outcome="recurrent_unresolved",
+                        )
+                        subject = track_service.update_subject_face_profile(
+                            subject=target_subject,
+                            camera_id=track.camera_id,
+                            observed_at=message.captured_at,
+                            frame_ref=message.frame_ref,
+                            face_detection=face_detection,
+                            embedding_result=embedding_result,
+                            match_result=match_result,
+                            semantic_descriptor_result=semantic_descriptor_result,
+                        )
+                    track = track_service.record_recurrent_resolution(
+                        track=track,
+                        recurrent_resolution=recurrent_resolution,
+                        resolved_at=message.captured_at,
+                    )
+            else:
+                recurrent_resolution = track_service.load_recurrent_resolution(track=track)
 
         decision = presence_service.decide(
             track=track,
             face_detection=face_detection,
             embedding_result=embedding_result,
             match_result=match_result,
+            semantic_descriptor_result=semantic_descriptor_result,
         )
         if continuity_resolution and continuity_resolution.outcome != "none":
             decision.payload["continuity_status"] = continuity_resolution.outcome
             decision.payload["subject_continuity"] = continuity_resolution.payload
             if continuity_resolution.requires_human_review:
                 decision.payload["requires_human_review"] = True
+        if recurrent_resolution and recurrent_resolution.outcome != "none":
+            decision.payload["unresolved_recurrence_status"] = recurrent_resolution.outcome
+            decision.payload["unresolved_subject_recurrence"] = recurrent_resolution.payload
+            if recurrent_resolution.requires_human_review:
+                decision.payload["requires_human_review"] = True
+            if recurrent_resolution.requires_case_evaluation:
+                decision.payload["requires_case_evaluation"] = True
 
         event = build_recognition_event(
             event_type=decision.event_type,
@@ -211,8 +300,9 @@ def process_fixture(fixture_path: str) -> dict:
             payload=event,
         )
 
-        if continuity_resolution:
-            for supplemental in continuity_resolution.supplemental_decisions:
+        supplemental_resolutions = [resolution for resolution in [continuity_resolution, recurrent_resolution] if resolution]
+        for supplemental_resolution in supplemental_resolutions:
+            for supplemental in supplemental_resolution.supplemental_decisions:
                 supplemental_subject_id = UUID(supplemental.subject_id) if supplemental.subject_id else subject.observed_subject_id
                 supplemental_event = build_recognition_event(
                     event_type=supplemental.event_type,
@@ -252,7 +342,7 @@ def process_fixture(fixture_path: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 4")
+    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 5")
     parser.add_argument("--fixture", required=True, help="Path to frame.ingested example JSON")
     args = parser.parse_args()
 

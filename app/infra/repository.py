@@ -7,7 +7,13 @@ from uuid import UUID, uuid4
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult, FaceMatchResult, KnownFaceGalleryEntry
+from app.domain.entities import (
+    FaceDetectionResult,
+    FaceEmbeddingResult,
+    FaceMatchResult,
+    KnownFaceGalleryEntry,
+    SemanticDescriptorResult,
+)
 from app.models import CrossCameraCorrelation, EventOutbox, HumanTrack, ObservedSubject, RecognitionEvent
 
 
@@ -179,6 +185,35 @@ class RecognitionRepository:
         self.session.flush()
         return track
 
+    def update_track_semantic_descriptor(
+        self,
+        track: HumanTrack,
+        *,
+        semantic_descriptor_result: SemanticDescriptorResult,
+        described_at: datetime,
+    ) -> HumanTrack:
+        metadata = dict(track.track_metadata or {})
+        metadata["last_semantic_descriptor"] = {
+            "described_at": described_at.isoformat(),
+            "generated": semantic_descriptor_result.generated,
+            "backend": semantic_descriptor_result.backend,
+            "confidence": semantic_descriptor_result.confidence,
+            "source_frame_ref": semantic_descriptor_result.source_frame_ref,
+            "rejection_reasons": semantic_descriptor_result.rejection_reasons,
+            "descriptor": semantic_descriptor_result.descriptor,
+            "signature": semantic_descriptor_result.signature,
+        }
+        if semantic_descriptor_result.generated:
+            best_descriptor = metadata.get("best_semantic_descriptor", {})
+            best_confidence = float(best_descriptor.get("confidence", 0.0))
+            if semantic_descriptor_result.confidence >= best_confidence:
+                metadata["best_semantic_descriptor"] = metadata["last_semantic_descriptor"]
+
+        track.track_metadata = metadata
+        self.session.add(track)
+        self.session.flush()
+        return track
+
     def update_subject_face_profile(
         self,
         subject: ObservedSubject,
@@ -189,6 +224,7 @@ class RecognitionRepository:
         face_detection: FaceDetectionResult,
         embedding_result: FaceEmbeddingResult | None = None,
         match_result: FaceMatchResult | None = None,
+        semantic_descriptor_result: SemanticDescriptorResult | None = None,
     ) -> ObservedSubject:
         metadata = dict(subject.subject_metadata or {})
         metadata["last_observation"] = {
@@ -230,10 +266,29 @@ class RecognitionRepository:
                 "attempted_at": observed_at.isoformat(),
             }
 
+        if semantic_descriptor_result and semantic_descriptor_result.generated:
+            metadata["last_semantic_descriptor"] = {
+                "generated_at": observed_at.isoformat(),
+                "backend": semantic_descriptor_result.backend,
+                "confidence": semantic_descriptor_result.confidence,
+                "source_frame_ref": semantic_descriptor_result.source_frame_ref,
+                "descriptor": semantic_descriptor_result.descriptor,
+                "signature": semantic_descriptor_result.signature,
+            }
+            best_descriptor = metadata.get("representative_semantic_descriptor", {})
+            best_confidence = float(best_descriptor.get("confidence", 0.0))
+            if semantic_descriptor_result.confidence >= best_confidence:
+                metadata["representative_semantic_descriptor"] = metadata["last_semantic_descriptor"]
+
         appearance_summary = dict(subject.appearance_summary or {})
         appearance_summary["last_face_quality_score"] = face_detection.quality_score
         appearance_summary["last_frame_ref"] = frame_ref
         appearance_summary["embedding_backend"] = embedding_result.backend if embedding_result else appearance_summary.get("embedding_backend")
+        if semantic_descriptor_result and semantic_descriptor_result.generated:
+            appearance_summary["semantic_descriptor_backend"] = semantic_descriptor_result.backend
+            appearance_summary["dominant_palette"] = semantic_descriptor_result.signature.get("dominant_palette", [])
+            appearance_summary["upper_region_color"] = semantic_descriptor_result.signature.get("upper_region_color")
+            appearance_summary["subject_scale"] = semantic_descriptor_result.signature.get("subject_scale")
 
         subject.subject_metadata = metadata
         subject.appearance_summary = appearance_summary
@@ -296,6 +351,51 @@ class RecognitionRepository:
             )
         return candidates
 
+    def load_recent_unresolved_subject_candidates(
+        self,
+        *,
+        exclude_subject_id: UUID,
+        observed_at: datetime,
+        window_seconds: int,
+    ) -> list[dict[str, Any]]:
+        cutoff = observed_at - timedelta(seconds=window_seconds)
+        statement = (
+            select(ObservedSubject)
+            .where(
+                ObservedSubject.observed_subject_id != exclude_subject_id,
+                ObservedSubject.last_seen_at >= cutoff,
+            )
+            .order_by(ObservedSubject.last_seen_at.desc())
+        )
+        subjects = self.session.execute(statement).scalars().all()
+        candidates: list[dict[str, Any]] = []
+        for subject in subjects:
+            metadata = dict(subject.subject_metadata or {})
+            continuity_resolution = metadata.get("continuity_resolution", {})
+            if continuity_resolution.get("outcome") == "correlated" and continuity_resolution.get("target_subject_id"):
+                continue
+            if metadata.get("resolved_identity"):
+                continue
+
+            semantic_descriptor = (
+                metadata.get("representative_semantic_descriptor")
+                or metadata.get("last_semantic_descriptor")
+            )
+            if not semantic_descriptor:
+                continue
+
+            latest_track = self.find_latest_track_for_subject(subject.observed_subject_id)
+            candidates.append(
+                {
+                    "subject": subject,
+                    "latest_track": latest_track,
+                    "semantic_descriptor": semantic_descriptor,
+                    "embedding": metadata.get("representative_face_embedding") or metadata.get("last_face_embedding"),
+                    "continuity_resolution": continuity_resolution,
+                }
+            )
+        return candidates
+
     def mark_subject_continuity(
         self,
         subject: ObservedSubject,
@@ -351,6 +451,19 @@ class RecognitionRepository:
     ) -> HumanTrack:
         metadata = dict(track.track_metadata or {})
         metadata["continuity_resolution"] = continuity_resolution
+        track.track_metadata = metadata
+        self.session.add(track)
+        self.session.flush()
+        return track
+
+    def update_track_recurrent_resolution(
+        self,
+        track: HumanTrack,
+        *,
+        recurrent_resolution: dict[str, Any],
+    ) -> HumanTrack:
+        metadata = dict(track.track_metadata or {})
+        metadata["recurrent_resolution"] = recurrent_resolution
         track.track_metadata = metadata
         self.session.add(track)
         self.session.flush()
@@ -427,7 +540,7 @@ class RecognitionRepository:
             evidence_refs=evidence_refs,
             payload=payload,
             requires_human_review=bool(payload.get("requires_human_review", False)),
-            requires_case_evaluation=False,
+            requires_case_evaluation=bool(payload.get("requires_case_evaluation", False)),
         )
         self.session.add(event)
         self.session.flush()

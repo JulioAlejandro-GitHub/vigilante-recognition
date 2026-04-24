@@ -1,7 +1,13 @@
 from uuid import uuid4
 
 from app.consumer import load_fixture_message
-from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult, FaceMatchCandidate, FaceMatchResult
+from app.domain.entities import (
+    FaceDetectionResult,
+    FaceEmbeddingResult,
+    FaceMatchCandidate,
+    FaceMatchResult,
+    SemanticDescriptorResult,
+)
 from app.domain.events import build_recognition_event
 from app.services.presence_service import PresenceService
 
@@ -102,6 +108,37 @@ def test_presence_no_face_for_low_quality_face_fixture():
     assert decision.payload["face_detection"]["usable"] is False
 
 
+def test_presence_decision_can_embed_semantic_descriptor():
+    service = PresenceService()
+    semantic_descriptor = SemanticDescriptorResult(
+        generated=True,
+        backend="simple_color_signature_v1",
+        confidence=0.82,
+        source_frame_ref="tests/fixtures/images/face_low_quality.jpg",
+        descriptor={
+            "appearance": {"dominant_palette": ["gray", "blue"]},
+            "silhouette": {"frame_aspect_ratio": "portrait"},
+        },
+        signature={"dominant_palette": ["gray", "blue"]},
+    )
+    face_detection = FaceDetectionResult(
+        detected=True,
+        usable=False,
+        quality_score=0.62,
+        bbox={"x": 20, "y": 20, "width": 80, "height": 80},
+    )
+
+    decision = service.decide(
+        track=DummyTrack(person_presence_score=0.9),
+        face_detection=face_detection,
+        semantic_descriptor_result=semantic_descriptor,
+    )
+
+    assert decision.event_type == "human_presence_no_face"
+    assert decision.payload["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
+    assert decision.payload["semantic_descriptor"]["appearance"]["dominant_palette"] == ["gray", "blue"]
+
+
 def test_fixture_contract_shape():
     msg = load_fixture_message("tests/fixtures/frame_ingested_example.json")
     assert "correlation_id" in msg.context
@@ -120,6 +157,12 @@ def test_fixture_contract_shape():
 
     manual_review_msg = load_fixture_message("tests/fixtures/frame_manual_review_required.json")
     assert manual_review_msg.context["dev_known_face_gallery_path"].endswith("dev_known_face_gallery_obama_only.json")
+
+    recurrent_msg = load_fixture_message("tests/fixtures/frame_recurrent_unresolved.json")
+    assert recurrent_msg.camera_id == "55555555-1111-1111-1111-111111111111"
+
+    case_msg = load_fixture_message("tests/fixtures/frame_case_suggestion_created.json")
+    assert case_msg.camera_id == "66666666-1111-1111-1111-111111111111"
 
 
 def test_recognition_event_keeps_canonical_camera_uuid_and_serializes_internal_ids():

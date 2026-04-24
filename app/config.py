@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     cross_camera_time_window_seconds: int = 600
     identity_conflict_margin: float = 0.25
     manual_review_threshold: float = 0.35
+    semantic_descriptor_backend: str = "simple_color_signature_v1"
+    semantic_similarity_threshold: float = 0.72
+    recurrent_subject_threshold: float = 0.78
+    case_suggestion_threshold: float = 0.9
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

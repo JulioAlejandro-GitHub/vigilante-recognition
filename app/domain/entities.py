@@ -78,6 +78,16 @@ class FaceEmbeddingResult(BaseModel):
     rejection_reasons: list[str] = Field(default_factory=list)
 
 
+class SemanticDescriptorResult(BaseModel):
+    generated: bool = False
+    backend: str
+    descriptor: dict[str, Any] = Field(default_factory=dict)
+    signature: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.0
+    source_frame_ref: Optional[str] = None
+    rejection_reasons: list[str] = Field(default_factory=list)
+
+
 class KnownFaceGalleryEntry(BaseModel):
     person_profile_id: str
     full_name: str
@@ -161,4 +171,45 @@ class ContinuityResolution(BaseModel):
     decision_reason: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
     assessment: Optional[CrossCameraAssessment] = None
+    supplemental_decisions: list[SupplementalRecognitionDecision] = Field(default_factory=list)
+
+
+class RecurrentSubjectCandidate(BaseModel):
+    observed_subject_id: str
+    latest_track_id: Optional[str] = None
+    last_camera_id: Optional[str] = None
+    last_seen_at: datetime
+    recurrence_count: int = 1
+    semantic_similarity_score: float
+    visual_similarity_score: float = 0.0
+    temporal_coherence_score: float
+    camera_relation_score: float
+    aggregate_score: float
+    descriptor_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class RecurrentSubjectAssessment(BaseModel):
+    current_subject_id: str
+    current_track_id: str
+    current_camera_id: str
+    semantic_similarity_threshold: float
+    recurrent_subject_threshold: float
+    case_suggestion_threshold: float
+    manual_review_threshold: float
+    evaluated_candidates: int = 0
+    best_candidate: Optional[RecurrentSubjectCandidate] = None
+    second_best_candidate: Optional[RecurrentSubjectCandidate] = None
+    second_best_margin: float = 0.0
+    decision_reason: list[str] = Field(default_factory=list)
+
+
+class RecurrentSubjectResolution(BaseModel):
+    outcome: str = "none"
+    subject_id_to_use: Optional[str] = None
+    target_track_id: Optional[str] = None
+    requires_human_review: bool = False
+    requires_case_evaluation: bool = False
+    decision_reason: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    assessment: Optional[RecurrentSubjectAssessment] = None
     supplemental_decisions: list[SupplementalRecognitionDecision] = Field(default_factory=list)

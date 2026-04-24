@@ -5,7 +5,13 @@ from pathlib import Path
 import cv2
 
 from app.config import settings
-from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult, FaceMatchResult, PresenceDecision
+from app.domain.entities import (
+    FaceDetectionResult,
+    FaceEmbeddingResult,
+    FaceMatchResult,
+    PresenceDecision,
+    SemanticDescriptorResult,
+)
 from app.models import HumanTrack
 
 
@@ -31,9 +37,11 @@ class PresenceService:
         face_detection: FaceDetectionResult,
         embedding_result: FaceEmbeddingResult | None = None,
         match_result: FaceMatchResult | None = None,
+        semantic_descriptor_result: SemanticDescriptorResult | None = None,
     ) -> PresenceDecision:
         decision_reason = ["human_track_confirmed"]
         serialized_detection = self._serialize_face_detection(face_detection)
+        semantic_payload = self._serialize_semantic_descriptor(semantic_descriptor_result)
 
         if not face_detection.usable:
             if face_detection.detected:
@@ -46,7 +54,10 @@ class PresenceService:
                 severity="low",
                 confidence=min(1.0, max(0.5, track.person_presence_score or 0.0)),
                 decision_reason=decision_reason,
-                payload={"face_detection": serialized_detection},
+                payload={
+                    "face_detection": serialized_detection,
+                    **({"semantic_descriptor": semantic_payload} if semantic_payload else {}),
+                },
             )
 
         decision_reason.extend(
@@ -61,6 +72,8 @@ class PresenceService:
             "embedding_dimensions": embedding_result.dimensions if embedding_result else 0,
             "identified": False,
         }
+        if semantic_payload:
+            payload["semantic_descriptor"] = semantic_payload
 
         if embedding_result and embedding_result.generated:
             decision_reason.append("embedding_generated")
@@ -254,4 +267,17 @@ class PresenceService:
             "rejection_reasons": face_detection.rejection_reasons,
             "quality_metrics": face_detection.quality_metrics,
             "frame_quality_metadata": face_detection.frame_quality_metadata,
+        }
+
+    def _serialize_semantic_descriptor(
+        self,
+        semantic_descriptor_result: SemanticDescriptorResult | None,
+    ) -> dict[str, object] | None:
+        if semantic_descriptor_result is None or not semantic_descriptor_result.generated:
+            return None
+        return {
+            "backend": semantic_descriptor_result.backend,
+            "confidence": semantic_descriptor_result.confidence,
+            "source_frame_ref": semantic_descriptor_result.source_frame_ref,
+            **semantic_descriptor_result.descriptor,
         }

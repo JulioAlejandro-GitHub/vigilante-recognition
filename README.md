@@ -4,9 +4,9 @@
 
 `vigilante-recognition` es el subsistema responsable de detectar presencia humana, construir tracks por cámara, evaluar rostro usable, extraer embeddings, correlacionar apariciones y emitir decisiones explicables para seguridad y operación.
 
-## Alcance del Slice 4
+## Alcance del Slice 5
 
-Este slice implementa continuidad mínima de `observed_subject`, correlación cross-camera, detección de conflicto de identidad y emisión de revisión manual, manteniendo intacto el flujo ya funcional de Slice 1–3.
+Este slice agrega descriptor semántico estructurado, recurrencia de sujetos no resueltos y sugerencia técnica de caso, manteniendo intacto el flujo ya funcional de Slice 1–4.
 
 Su objetivo actual es dejar un bootstrap funcional para:
 
@@ -19,6 +19,9 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - comparar contra galería conocida
 - correlacionar apariciones entre cámaras usando embedding, ventana temporal y cambio de cámara
 - detectar conflicto cuando identidad y continuidad técnica se contradicen
+- generar descriptor semántico estructurado para sujetos no identificados o sin rostro usable
+- elevar recurrencia de sujetos no resueltos usando similitud semántica, señal visual disponible y proximidad temporal
+- sugerir revisión manual y caso técnico cuando la evidencia acumulada lo justifica
 - emitir revisión manual cuando la correlación no es suficientemente confiable
 - emitir:
   - `face_detected_identified`
@@ -27,6 +30,8 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `cross_camera_subject_correlated`
   - `identity_conflict`
   - `manual_review_required`
+  - `recurrent_unresolved_subject`
+  - `case_suggestion_created`
 - persistir entidades mínimas:
   - `human_track`
   - `observed_subject`
@@ -34,7 +39,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `event_outbox`
   - `cross_camera_correlation`
 
-### Decisión del Slice 4
+### Decisión del Slice 5
 
 - si hay presencia humana confirmada, se detecta un rostro con `quality_score >= 0.75` y el match supera `FACE_MATCH_THRESHOLD` con margen suficiente, el worker emite `face_detected_identified`
 - si hay presencia humana confirmada y se detecta un rostro usable pero sin match confiable, el worker emite `face_detected_unidentified`
@@ -44,10 +49,15 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - si la correlación no alcanza umbral automático pero sí suficiente señal para no descartar, el worker emite `manual_review_required`
 - la continuidad cross-camera solo se evalúa cuando la aparición abre un `human_track` nuevo; replays del mismo `correlation_id` no recalculan contra historial nuevo
 - si el `human_track` ya tenía una resolución de continuidad persistida, el replay la reutiliza y reemite el mismo resultado técnico sin volver a correlacionar
+- si el sujeto queda no resuelto, el worker genera un descriptor semántico estructurado y lo persiste en metadata/payload
+- si un sujeto no resuelto reaparece con similitud suficiente, el worker reutiliza el `observed_subject`, eleva su recurrencia y emite `recurrent_unresolved_subject`
+- si la recurrencia no resuelta acumula evidencia suficiente, el worker emite `manual_review_required`
+- si la recurrencia no resuelta alcanza umbral de caso técnico, el worker emite `case_suggestion_created` con `requires_case_evaluation=true`
 - la metadata facial y el resumen de matching se guardan dentro de `recognition_event.payload`
 - la continuidad y el estado de resolución se guardan en metadata de `observed_subject` y `human_track`
 - si `recognition.person_profile_projection` y `recognition.person_profile_embedding_projection` no tienen galería compatible disponible, se usa `app/data/dev_known_face_gallery.json` como fallback local de desarrollo
 - el backend actual de embedding es `simple_face_crop_512`, preparado para reemplazarse por un motor real después
+- el backend actual del descriptor semántico es `simple_color_signature_v1`, preparado para reemplazarse por `Qwen/Qwen2.5-VL-3B-Instruct` con fallback `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
 
 ### Resolución de cámara en Slice 1
 
@@ -62,7 +72,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - `candidate_match` completo de producción
 - correlación cross-camera avanzada
 - merge de subjects
-- descriptor semántico con Hugging Face
+- descriptor semántico real con Hugging Face / VLM
 - integración real con media
 - integración real con alerting
 - revisión humana completa
@@ -89,10 +99,13 @@ PYTHONPATH=. pytest
 ```bash
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_example.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_no_face.json
+PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_unidentified.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_identified.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_cross_camera_positive.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_identity_conflict.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_manual_review_required.json
+PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_recurrent_unresolved.json
+PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_case_suggestion_created.json
 ```
 
 ## Fixtures incluidos
@@ -104,6 +117,8 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_manual_review_
 - `tests/fixtures/frame_cross_camera_positive.json`: aparición en otra cámara correlacionable con el mismo sujeto
 - `tests/fixtures/frame_identity_conflict.json`: misma continuidad técnica pero identidad conocida incompatible
 - `tests/fixtures/frame_manual_review_required.json`: correlación incierta que eleva revisión manual
+- `tests/fixtures/frame_recurrent_unresolved.json`: sujeto sin rostro usable que reaparece con descriptor semántico consistente
+- `tests/fixtures/frame_case_suggestion_created.json`: tercera aparición consistente de sujeto no resuelto que eleva sugerencia de caso
 - `tests/fixtures/images/face_detectable.jpg`: imagen base con rostro detectable
 - `tests/fixtures/images/face_low_quality.jpg`: versión degradada para forzar `human_presence_no_face`
 - `tests/fixtures/images/face_identified.jpg`: rostro conocido para match positivo de desarrollo
@@ -123,13 +138,18 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_manual_review_
 - `CROSS_CAMERA_TIME_WINDOW_SECONDS=600`
 - `IDENTITY_CONFLICT_MARGIN=0.25`
 - `MANUAL_REVIEW_THRESHOLD=0.35`
+- `SEMANTIC_DESCRIPTOR_BACKEND=simple_color_signature_v1`
+- `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
+- `RECURRENT_SUBJECT_THRESHOLD=0.78`
+- `CASE_SUGGESTION_THRESHOLD=0.9`
 
 ## Pendiente para Slice 5
 
 - reemplazar el backend liviano por un motor facial real como InsightFace
 - `candidate_match`
 - correlación cross-camera avanzada
-- descriptor semántico con Hugging Face
+- descriptor semántico con `Qwen/Qwen2.5-VL-3B-Instruct`
+- fallback semántico con `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
 - integración real con media
 - integración real con alerting
 - revisión humana
@@ -147,3 +167,5 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_manual_review_
 - `cross_camera_subject_correlated`
 - `identity_conflict`
 - `manual_review_required`
+- `recurrent_unresolved_subject`
+- `case_suggestion_created`

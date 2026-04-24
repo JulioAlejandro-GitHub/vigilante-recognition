@@ -10,6 +10,9 @@ from app.domain.entities import (
     CrossCameraCandidate,
     FrameIngestedMessage,
     InvalidCameraIdError,
+    RecurrentSubjectAssessment,
+    RecurrentSubjectCandidate,
+    RecurrentSubjectResolution,
     SupplementalRecognitionDecision,
 )
 from app.models import CrossCameraCorrelation, EventOutbox, HumanTrack, RecognitionEvent
@@ -45,14 +48,17 @@ def _configure_repo_for_slice3_flow(mock_repo_instance, *, subject, track, recog
     mock_repo_instance.update_track_face_observation.return_value = track
     mock_repo_instance.update_track_match_result.return_value = track
     mock_repo_instance.update_subject_face_profile.return_value = subject
+    mock_repo_instance.update_track_semantic_descriptor.return_value = track
     mock_repo_instance.load_known_face_gallery_entries.return_value = []
     mock_repo_instance.load_recent_subject_candidates.return_value = []
+    mock_repo_instance.load_recent_unresolved_subject_candidates.return_value = []
     mock_repo_instance.find_latest_cross_camera_correlation_for_source_track.return_value = None
     mock_repo_instance.mark_subject_continuity.return_value = subject
     mock_repo_instance.add_cross_camera_correlation.return_value = MagicMock(spec=CrossCameraCorrelation)
     mock_repo_instance.attach_subject_to_track.return_value = track
     mock_repo_instance.touch_subject.return_value = subject
     mock_repo_instance.update_track_continuity_resolution.return_value = track
+    mock_repo_instance.update_track_recurrent_resolution.return_value = track
 
 
 def test_fixture_loads():
@@ -115,6 +121,7 @@ def test_process_fixture_smoke(mock_get_session, mock_repo_class):
     assert event["payload"]["face_detection"]["usable"] is True
     assert event["payload"]["identified"] is False
     assert event["payload"]["match_confidence"] < 0.82
+    assert event["payload"]["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
 
     mock_repo_instance.create_subject.assert_called_once()
     assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
@@ -128,6 +135,7 @@ def test_process_fixture_smoke(mock_get_session, mock_repo_class):
     assert recognition_event_call["evidence_refs"] == ["tests/fixtures/images/face_detectable.jpg"]
     assert recognition_event_call["payload"]["face_detection"]["usable"] is True
     assert recognition_event_call["payload"]["identified"] is False
+    assert recognition_event_call["payload"]["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
 
     outbox_call = mock_repo_instance.add_outbox_event.call_args.kwargs
     assert outbox_call["aggregate_id"] == recognition_event_id
@@ -338,6 +346,7 @@ def test_process_fixture_low_quality_face_persists_no_face_event(mock_get_sessio
     assert event["event_type"] == "human_presence_no_face"
     assert event["payload"]["face_detection"]["detected"] is True
     assert event["payload"]["face_detection"]["usable"] is False
+    assert event["payload"]["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
     assert mock_repo_instance.add_recognition_event.call_args.kwargs["payload"]["face_detection"]["usable"] is False
     assert mock_repo_instance.add_outbox_event.call_args.kwargs["payload"]["event_type"] == "human_presence_no_face"
     assert mock_repo_instance.add_outbox_event.call_args.kwargs["aggregate_id"] == recognition_event_id
@@ -695,6 +704,231 @@ def test_process_fixture_manual_review_emits_review_event(mock_get_session, mock
     ]
     mock_repo_instance.add_cross_camera_correlation.assert_called_once()
     mock_repo_instance.mark_subject_continuity.assert_called_once()
+
+
+@patch("app.worker.RecognitionRepository")
+@patch("app.worker.get_session")
+def test_process_fixture_recurrent_unresolved_emits_recurrence_and_review(mock_get_session, mock_repo_class):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    mock_repo_instance = MagicMock()
+    current_subject_id = uuid4()
+    target_subject_id = uuid4()
+    track_id = uuid4()
+    target_track_id = uuid4()
+
+    current_subject = MagicMock()
+    current_subject.observed_subject_id = current_subject_id
+    target_subject = MagicMock()
+    target_subject.observed_subject_id = target_subject_id
+
+    track = MagicMock()
+    track.human_track_id = track_id
+    track.camera_id = UUID("55555555-1111-1111-1111-111111111111")
+    track.person_presence_score = 0.0
+
+    _configure_repo_for_slice3_flow(
+        mock_repo_instance,
+        subject=current_subject,
+        track=track,
+        recognition_event=_make_recognition_event(),
+    )
+    mock_repo_instance.get_subject.return_value = target_subject
+    mock_repo_instance.touch_subject.return_value = target_subject
+    mock_repo_instance.update_subject_face_profile.return_value = target_subject
+    mock_repo_instance.add_recognition_event.side_effect = [
+        _make_recognition_event(),
+        _make_recognition_event(),
+        _make_recognition_event(),
+    ]
+    mock_repo_class.return_value = mock_repo_instance
+
+    fixture = load_fixture_message("tests/fixtures/frame_recurrent_unresolved.json")
+    assessment = RecurrentSubjectAssessment(
+        current_subject_id=str(current_subject_id),
+        current_track_id=str(track_id),
+        current_camera_id=fixture.camera_id,
+        semantic_similarity_threshold=0.72,
+        recurrent_subject_threshold=0.78,
+        case_suggestion_threshold=0.9,
+        manual_review_threshold=0.35,
+        evaluated_candidates=1,
+        best_candidate=RecurrentSubjectCandidate(
+            observed_subject_id=str(target_subject_id),
+            latest_track_id=str(target_track_id),
+            last_camera_id=CAMERA_ID,
+            last_seen_at=fixture.captured_at,
+            recurrence_count=1,
+            semantic_similarity_score=1.0,
+            visual_similarity_score=0.0,
+            temporal_coherence_score=0.8,
+            camera_relation_score=1.0,
+            aggregate_score=0.96,
+            descriptor_summary={"dominant_palette": ["gray", "blue"]},
+        ),
+        decision_reason=["unresolved_recurrence_threshold_passed"],
+    )
+    resolution = RecurrentSubjectResolution(
+        outcome="recurrent_unresolved",
+        subject_id_to_use=str(target_subject_id),
+        target_track_id=str(target_track_id),
+        requires_human_review=True,
+        decision_reason=["semantic_subject_recurrence_detected"],
+        payload={"evidence_count": 2},
+        assessment=assessment,
+        supplemental_decisions=[
+            SupplementalRecognitionDecision(
+                event_type="recurrent_unresolved_subject",
+                severity="medium",
+                confidence=0.96,
+                decision_reason=["semantic_subject_recurrence_detected"],
+                payload={"evidence_count": 2},
+                subject_id=str(target_subject_id),
+            ),
+            SupplementalRecognitionDecision(
+                event_type="manual_review_required",
+                severity="medium",
+                confidence=0.96,
+                decision_reason=["recurrent_unresolved_subject_detected"],
+                payload={"requires_human_review": True},
+                subject_id=str(target_subject_id),
+            ),
+        ],
+    )
+
+    with patch("app.worker.RecurrentSubjectService") as mock_recurrent_service_class:
+        mock_recurrent_service_class.return_value.evaluate.return_value = assessment
+        mock_recurrent_service_class.return_value.resolve.return_value = resolution
+
+        event = process_fixture("tests/fixtures/frame_recurrent_unresolved.json")
+
+    assert event["event_type"] == "human_presence_no_face"
+    assert event["payload"]["unresolved_recurrence_status"] == "recurrent_unresolved"
+    assert event["payload"]["requires_human_review"] is True
+    assert [call.kwargs["event_type"] for call in mock_repo_instance.add_recognition_event.call_args_list] == [
+        "human_presence_no_face",
+        "recurrent_unresolved_subject",
+        "manual_review_required",
+    ]
+
+
+@patch("app.worker.RecognitionRepository")
+@patch("app.worker.get_session")
+def test_process_fixture_case_suggestion_emits_case_event(mock_get_session, mock_repo_class):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    mock_repo_instance = MagicMock()
+    current_subject_id = uuid4()
+    target_subject_id = uuid4()
+    track_id = uuid4()
+    target_track_id = uuid4()
+
+    current_subject = MagicMock()
+    current_subject.observed_subject_id = current_subject_id
+    target_subject = MagicMock()
+    target_subject.observed_subject_id = target_subject_id
+
+    track = MagicMock()
+    track.human_track_id = track_id
+    track.camera_id = UUID("66666666-1111-1111-1111-111111111111")
+    track.person_presence_score = 0.0
+
+    _configure_repo_for_slice3_flow(
+        mock_repo_instance,
+        subject=current_subject,
+        track=track,
+        recognition_event=_make_recognition_event(),
+    )
+    mock_repo_instance.get_subject.return_value = target_subject
+    mock_repo_instance.touch_subject.return_value = target_subject
+    mock_repo_instance.update_subject_face_profile.return_value = target_subject
+    mock_repo_instance.add_recognition_event.side_effect = [
+        _make_recognition_event(),
+        _make_recognition_event(),
+        _make_recognition_event(),
+        _make_recognition_event(),
+    ]
+    mock_repo_class.return_value = mock_repo_instance
+
+    fixture = load_fixture_message("tests/fixtures/frame_case_suggestion_created.json")
+    assessment = RecurrentSubjectAssessment(
+        current_subject_id=str(current_subject_id),
+        current_track_id=str(track_id),
+        current_camera_id=fixture.camera_id,
+        semantic_similarity_threshold=0.72,
+        recurrent_subject_threshold=0.78,
+        case_suggestion_threshold=0.9,
+        manual_review_threshold=0.35,
+        evaluated_candidates=1,
+        best_candidate=RecurrentSubjectCandidate(
+            observed_subject_id=str(target_subject_id),
+            latest_track_id=str(target_track_id),
+            last_camera_id="55555555-1111-1111-1111-111111111111",
+            last_seen_at=fixture.captured_at,
+            recurrence_count=2,
+            semantic_similarity_score=1.0,
+            visual_similarity_score=0.0,
+            temporal_coherence_score=0.8,
+            camera_relation_score=1.0,
+            aggregate_score=0.96,
+            descriptor_summary={"dominant_palette": ["gray", "blue"]},
+        ),
+        decision_reason=["unresolved_recurrence_threshold_passed"],
+    )
+    resolution = RecurrentSubjectResolution(
+        outcome="recurrent_unresolved",
+        subject_id_to_use=str(target_subject_id),
+        target_track_id=str(target_track_id),
+        requires_human_review=True,
+        requires_case_evaluation=True,
+        decision_reason=["semantic_subject_recurrence_detected"],
+        payload={"evidence_count": 3, "requires_case_evaluation": True},
+        assessment=assessment,
+        supplemental_decisions=[
+            SupplementalRecognitionDecision(
+                event_type="recurrent_unresolved_subject",
+                severity="medium",
+                confidence=0.96,
+                decision_reason=["semantic_subject_recurrence_detected"],
+                payload={"evidence_count": 3},
+                subject_id=str(target_subject_id),
+            ),
+            SupplementalRecognitionDecision(
+                event_type="manual_review_required",
+                severity="medium",
+                confidence=0.96,
+                decision_reason=["recurrent_unresolved_subject_detected"],
+                payload={"requires_human_review": True},
+                subject_id=str(target_subject_id),
+            ),
+            SupplementalRecognitionDecision(
+                event_type="case_suggestion_created",
+                severity="medium",
+                confidence=0.96,
+                decision_reason=["case_suggestion_threshold_passed"],
+                payload={"requires_case_evaluation": True},
+                subject_id=str(target_subject_id),
+            ),
+        ],
+    )
+
+    with patch("app.worker.RecurrentSubjectService") as mock_recurrent_service_class:
+        mock_recurrent_service_class.return_value.evaluate.return_value = assessment
+        mock_recurrent_service_class.return_value.resolve.return_value = resolution
+
+        event = process_fixture("tests/fixtures/frame_case_suggestion_created.json")
+
+    assert event["event_type"] == "human_presence_no_face"
+    assert event["payload"]["unresolved_recurrence_status"] == "recurrent_unresolved"
+    assert event["payload"]["requires_case_evaluation"] is True
+    assert [call.kwargs["event_type"] for call in mock_repo_instance.add_recognition_event.call_args_list] == [
+        "human_presence_no_face",
+        "recurrent_unresolved_subject",
+        "manual_review_required",
+        "case_suggestion_created",
+    ]
 
 
 @patch("app.worker.RecognitionRepository")
