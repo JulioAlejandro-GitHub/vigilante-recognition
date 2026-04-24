@@ -116,6 +116,8 @@ def test_presence_decision_can_embed_semantic_descriptor():
         confidence=0.82,
         source_frame_ref="tests/fixtures/images/face_low_quality.jpg",
         descriptor={
+            "descriptor_backend": "simple_color_signature_v1",
+            "descriptor_confidence": 0.82,
             "appearance": {"dominant_palette": ["gray", "blue"]},
             "silhouette": {"frame_aspect_ratio": "portrait"},
         },
@@ -136,6 +138,7 @@ def test_presence_decision_can_embed_semantic_descriptor():
 
     assert decision.event_type == "human_presence_no_face"
     assert decision.payload["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
+    assert decision.payload["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
     assert decision.payload["semantic_descriptor"]["appearance"]["dominant_palette"] == ["gray", "blue"]
 
 

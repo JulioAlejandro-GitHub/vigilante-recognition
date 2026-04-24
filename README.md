@@ -4,9 +4,9 @@
 
 `vigilante-recognition` es el subsistema responsable de detectar presencia humana, construir tracks por cámara, evaluar rostro usable, extraer embeddings, correlacionar apariciones y emitir decisiones explicables para seguridad y operación.
 
-## Alcance del Slice 5
+## Alcance del Slice 6
 
-Este slice agrega descriptor semántico estructurado, recurrencia de sujetos no resueltos y sugerencia técnica de caso, manteniendo intacto el flujo ya funcional de Slice 1–4.
+Este slice reemplaza la capa semántica heurística del Slice 5 por una arquitectura enchufable de backends, manteniendo intacto el flujo ya funcional de Slice 1–5.
 
 Su objetivo actual es dejar un bootstrap funcional para:
 
@@ -20,6 +20,9 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - correlacionar apariciones entre cámaras usando embedding, ventana temporal y cambio de cámara
 - detectar conflicto cuando identidad y continuidad técnica se contradicen
 - generar descriptor semántico estructurado para sujetos no identificados o sin rostro usable
+- seleccionar backend semántico configurable con backend real canónico `Qwen/Qwen2.5-VL-3B-Instruct`
+- usar fallback `HuggingFaceTB/SmolVLM2-2.2B-Instruct` cuando falle el backend principal
+- degradar a backend local y determinístico para tests, CI y desarrollo liviano
 - elevar recurrencia de sujetos no resueltos usando similitud semántica, señal visual disponible y proximidad temporal
 - sugerir revisión manual y caso técnico cuando la evidencia acumulada lo justifica
 - emitir revisión manual cuando la correlación no es suficientemente confiable
@@ -39,7 +42,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `event_outbox`
   - `cross_camera_correlation`
 
-### Decisión del Slice 5
+### Decisión del Slice 6
 
 - si hay presencia humana confirmada, se detecta un rostro con `quality_score >= 0.75` y el match supera `FACE_MATCH_THRESHOLD` con margen suficiente, el worker emite `face_detected_identified`
 - si hay presencia humana confirmada y se detecta un rostro usable pero sin match confiable, el worker emite `face_detected_unidentified`
@@ -57,7 +60,12 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - la continuidad y el estado de resolución se guardan en metadata de `observed_subject` y `human_track`
 - si `recognition.person_profile_projection` y `recognition.person_profile_embedding_projection` no tienen galería compatible disponible, se usa `app/data/dev_known_face_gallery.json` como fallback local de desarrollo
 - el backend actual de embedding es `simple_face_crop_512`, preparado para reemplazarse por un motor real después
-- el backend actual del descriptor semántico es `simple_color_signature_v1`, preparado para reemplazarse por `Qwen/Qwen2.5-VL-3B-Instruct` con fallback `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- la capa semántica se resuelve por selector de backends:
+  - `qwen_vl` para `Qwen/Qwen2.5-VL-3B-Instruct`
+  - `smolvlm` para `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+  - `simple` para `simple_color_signature_v1`
+- si `SEMANTIC_USE_REAL_VLM=false`, los backends VLM se omiten y el worker cae al backend simple sin romper el flujo
+- si el backend principal devuelve salida inválida o falla, el worker intenta fallback y registra la traza de intentos en `semantic_descriptor.generation_trace`
 
 ### Resolución de cámara en Slice 1
 
@@ -72,7 +80,6 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - `candidate_match` completo de producción
 - correlación cross-camera avanzada
 - merge de subjects
-- descriptor semántico real con Hugging Face / VLM
 - integración real con media
 - integración real con alerting
 - revisión humana completa
@@ -108,6 +115,17 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_recurrent_unre
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_case_suggestion_created.json
 ```
 
+### Backend VLM opcional
+
+El worker puede usar un backend VLM real, pero no es obligatorio para tests ni smoke tests.
+
+- Para tests y CI: deja `SEMANTIC_USE_REAL_VLM=false`
+- Para entorno real: configura `SEMANTIC_USE_REAL_VLM=true`
+- Backend canónico: `SEMANTIC_VLM_PRIMARY_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`
+- Fallback: `SEMANTIC_VLM_FALLBACK_MODEL=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+
+Si quieres habilitar inferencia real fuera de esta suite, instala dependencias opcionales compatibles como `transformers`, `torch` y `Pillow`. No forman parte de `requirements.txt` para mantener la validación local rápida.
+
 ## Fixtures incluidos
 
 - `tests/fixtures/frame_ingested_example.json`: caso con rostro usable y sin match confiable
@@ -119,6 +137,7 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_case_suggestio
 - `tests/fixtures/frame_manual_review_required.json`: correlación incierta que eleva revisión manual
 - `tests/fixtures/frame_recurrent_unresolved.json`: sujeto sin rostro usable que reaparece con descriptor semántico consistente
 - `tests/fixtures/frame_case_suggestion_created.json`: tercera aparición consistente de sujeto no resuelto que eleva sugerencia de caso
+- `tests/fixtures/semantic_vlm_raw_response.json`: muestra de salida VLM para validar normalización estructurada
 - `tests/fixtures/images/face_detectable.jpg`: imagen base con rostro detectable
 - `tests/fixtures/images/face_low_quality.jpg`: versión degradada para forzar `human_presence_no_face`
 - `tests/fixtures/images/face_identified.jpg`: rostro conocido para match positivo de desarrollo
@@ -138,18 +157,21 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_case_suggestio
 - `CROSS_CAMERA_TIME_WINDOW_SECONDS=600`
 - `IDENTITY_CONFLICT_MARGIN=0.25`
 - `MANUAL_REVIEW_THRESHOLD=0.35`
-- `SEMANTIC_DESCRIPTOR_BACKEND=simple_color_signature_v1`
+- `SEMANTIC_DESCRIPTOR_BACKEND=qwen_vl`
+- `SEMANTIC_USE_REAL_VLM=false`
+- `SEMANTIC_VLM_PRIMARY_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`
+- `SEMANTIC_VLM_FALLBACK_MODEL=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- `SEMANTIC_TIMEOUT_SECONDS=45`
 - `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
 - `RECURRENT_SUBJECT_THRESHOLD=0.78`
 - `CASE_SUGGESTION_THRESHOLD=0.9`
 
-## Pendiente para Slice 5
+## Pendiente para Slice 6
 
 - reemplazar el backend liviano por un motor facial real como InsightFace
 - `candidate_match`
 - correlación cross-camera avanzada
-- descriptor semántico con `Qwen/Qwen2.5-VL-3B-Instruct`
-- fallback semántico con `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- endurecer la ejecución real de VLM para producción con manejo de device, batching y timeouts más robustos
 - integración real con media
 - integración real con alerting
 - revisión humana

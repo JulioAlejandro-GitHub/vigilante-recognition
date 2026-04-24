@@ -261,6 +261,32 @@ class RecurrentSubjectService:
 
         return resolution
 
+    def enrich_resolution_with_descriptor(
+        self,
+        *,
+        resolution: RecurrentSubjectResolution | None,
+        semantic_descriptor_result: SemanticDescriptorResult | None,
+    ) -> RecurrentSubjectResolution | None:
+        if (
+            resolution is None
+            or resolution.outcome == "none"
+            or semantic_descriptor_result is None
+            or not semantic_descriptor_result.generated
+        ):
+            return resolution
+
+        enriched_descriptor = semantic_descriptor_result.descriptor
+        resolution.payload = {
+            **dict(resolution.payload or {}),
+            "semantic_descriptor": enriched_descriptor,
+        }
+        for supplemental in resolution.supplemental_decisions:
+            supplemental.payload = {
+                **dict(supplemental.payload or {}),
+                "semantic_descriptor": enriched_descriptor,
+            }
+        return resolution
+
     def _serialize_assessment(self, assessment: RecurrentSubjectAssessment) -> dict:
         candidates = []
         for candidate in [assessment.best_candidate, assessment.second_best_candidate]:

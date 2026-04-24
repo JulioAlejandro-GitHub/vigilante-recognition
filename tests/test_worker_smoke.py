@@ -122,6 +122,7 @@ def test_process_fixture_smoke(mock_get_session, mock_repo_class):
     assert event["payload"]["identified"] is False
     assert event["payload"]["match_confidence"] < 0.82
     assert event["payload"]["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
+    assert event["payload"]["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
 
     mock_repo_instance.create_subject.assert_called_once()
     assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
@@ -136,6 +137,7 @@ def test_process_fixture_smoke(mock_get_session, mock_repo_class):
     assert recognition_event_call["payload"]["face_detection"]["usable"] is True
     assert recognition_event_call["payload"]["identified"] is False
     assert recognition_event_call["payload"]["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
+    assert recognition_event_call["payload"]["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
 
     outbox_call = mock_repo_instance.add_outbox_event.call_args.kwargs
     assert outbox_call["aggregate_id"] == recognition_event_id
@@ -347,6 +349,7 @@ def test_process_fixture_low_quality_face_persists_no_face_event(mock_get_sessio
     assert event["payload"]["face_detection"]["detected"] is True
     assert event["payload"]["face_detection"]["usable"] is False
     assert event["payload"]["semantic_descriptor"]["backend"] == "simple_color_signature_v1"
+    assert event["payload"]["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
     assert mock_repo_instance.add_recognition_event.call_args.kwargs["payload"]["face_detection"]["usable"] is False
     assert mock_repo_instance.add_outbox_event.call_args.kwargs["payload"]["event_type"] == "human_presence_no_face"
     assert mock_repo_instance.add_outbox_event.call_args.kwargs["aggregate_id"] == recognition_event_id
@@ -806,6 +809,7 @@ def test_process_fixture_recurrent_unresolved_emits_recurrence_and_review(mock_g
     assert event["event_type"] == "human_presence_no_face"
     assert event["payload"]["unresolved_recurrence_status"] == "recurrent_unresolved"
     assert event["payload"]["requires_human_review"] is True
+    assert event["payload"]["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
     assert [call.kwargs["event_type"] for call in mock_repo_instance.add_recognition_event.call_args_list] == [
         "human_presence_no_face",
         "recurrent_unresolved_subject",
@@ -923,6 +927,7 @@ def test_process_fixture_case_suggestion_emits_case_event(mock_get_session, mock
     assert event["event_type"] == "human_presence_no_face"
     assert event["payload"]["unresolved_recurrence_status"] == "recurrent_unresolved"
     assert event["payload"]["requires_case_evaluation"] is True
+    assert event["payload"]["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
     assert [call.kwargs["event_type"] for call in mock_repo_instance.add_recognition_event.call_args_list] == [
         "human_presence_no_face",
         "recurrent_unresolved_subject",

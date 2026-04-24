@@ -7,7 +7,7 @@ from uuid import UUID
 from app.config import settings
 from app.consumer import load_fixture_message
 from app.db import get_session, init_db
-from app.domain.entities import InvalidCameraIdError
+from app.domain.entities import InvalidCameraIdError, RecurrentSubjectResolution
 from app.domain.events import build_recognition_event
 from app.infra.repository import RecognitionRepository
 from app.logging import configure_logging
@@ -248,6 +248,13 @@ def process_fixture(fixture_path: str) -> dict:
                     )
             else:
                 recurrent_resolution = track_service.load_recurrent_resolution(track=track)
+        if recurrent_resolution is not None:
+            enriched_resolution = recurrent_subject_service.enrich_resolution_with_descriptor(
+                resolution=recurrent_resolution,
+                semantic_descriptor_result=semantic_descriptor_result,
+            )
+            if isinstance(enriched_resolution, RecurrentSubjectResolution):
+                recurrent_resolution = enriched_resolution
 
         decision = presence_service.decide(
             track=track,
@@ -342,7 +349,7 @@ def process_fixture(fixture_path: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 5")
+    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 6")
     parser.add_argument("--fixture", required=True, help="Path to frame.ingested example JSON")
     args = parser.parse_args()
 

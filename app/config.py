@@ -30,7 +30,11 @@ class Settings(BaseSettings):
     cross_camera_time_window_seconds: int = 600
     identity_conflict_margin: float = 0.25
     manual_review_threshold: float = 0.35
-    semantic_descriptor_backend: str = "simple_color_signature_v1"
+    semantic_descriptor_backend: str = "qwen_vl"
+    semantic_use_real_vlm: bool = False
+    semantic_vlm_primary_model: str = "Qwen/Qwen2.5-VL-3B-Instruct"
+    semantic_vlm_fallback_model: str = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+    semantic_timeout_seconds: int = 45
     semantic_similarity_threshold: float = 0.72
     recurrent_subject_threshold: float = 0.78
     case_suggestion_threshold: float = 0.9

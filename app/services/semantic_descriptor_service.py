@@ -1,17 +1,36 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
-
-import cv2
-import numpy as np
+import re
+from typing import Any
 
 from app.config import settings
 from app.domain.entities import FaceDetectionResult, SemanticDescriptorResult
+from app.services.semantic_backends import (
+    QwenVLSemanticBackend,
+    SemanticBackendContext,
+    SemanticBackendError,
+    SemanticDescriptorBackend,
+    SimpleSemanticDescriptorBackend,
+    SmolVlmSemanticBackend,
+)
 
 
 class SemanticDescriptorService:
-    FUTURE_PRIMARY_MODEL = "Qwen/Qwen2.5-VL-3B-Instruct"
-    FUTURE_FALLBACK_MODEL = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+    SIMPLE_BACKEND_KEY = "simple"
+    REAL_BACKEND_KEYS = {"qwen_vl", "smolvlm"}
+
+    def __init__(
+        self,
+        *,
+        backends: dict[str, SemanticDescriptorBackend] | None = None,
+    ) -> None:
+        self.backends = backends or {
+            self.SIMPLE_BACKEND_KEY: SimpleSemanticDescriptorBackend(),
+            "qwen_vl": QwenVLSemanticBackend(),
+            "smolvlm": SmolVlmSemanticBackend(),
+        }
 
     def generate(
         self,
@@ -19,10 +38,112 @@ class SemanticDescriptorService:
         frame_ref: str,
         face_detection: FaceDetectionResult | None = None,
     ) -> SemanticDescriptorResult:
+        frame_path = self._resolve_frame_path(frame_ref)
         requested_backend = settings.semantic_descriptor_backend
-        if requested_backend != "simple_color_signature_v1":
-            return self._generate_simple(frame_ref=frame_ref, face_detection=face_detection, requested_backend=requested_backend)
-        return self._generate_simple(frame_ref=frame_ref, face_detection=face_detection)
+        generation_trace = {
+            "requested_backend": requested_backend,
+            "selected_backend": None,
+            "selected_backend_key": None,
+            "attempts": [],
+        }
+        if frame_path is None:
+            return SemanticDescriptorResult(
+                backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
+                source_frame_ref=frame_ref,
+                rejection_reasons=["frame_ref_not_found"],
+                descriptor={"generation_trace": generation_trace},
+            )
+
+        rejection_reasons: list[str] = []
+        for backend_key in self._build_backend_chain(requested_backend=requested_backend):
+            backend = self.backends.get(backend_key)
+            if backend is None:
+                generation_trace["attempts"].append(
+                    {
+                        "backend_key": backend_key,
+                        "backend_name": backend_key,
+                        "status": "skipped",
+                        "reason": "backend_not_registered",
+                    }
+                )
+                continue
+
+            if backend_key in self.REAL_BACKEND_KEYS and not settings.semantic_use_real_vlm:
+                generation_trace["attempts"].append(
+                    {
+                        "backend_key": backend_key,
+                        "backend_name": backend.backend_name,
+                        "status": "skipped",
+                        "reason": "real_vlm_disabled",
+                    }
+                )
+                continue
+
+            context = SemanticBackendContext(
+                frame_ref=frame_ref,
+                image_path=frame_path,
+                face_detection=face_detection,
+                requested_backend=requested_backend,
+                timeout_seconds=settings.semantic_timeout_seconds,
+            )
+            try:
+                backend_output = backend.generate_descriptor(image_path=frame_path, context=context)
+                descriptor, signature, confidence = self._normalize_descriptor(
+                    raw_descriptor=backend_output.descriptor,
+                    backend_name=backend_output.backend_name,
+                    frame_ref=frame_ref,
+                    face_detection=face_detection,
+                    confidence_override=backend_output.confidence,
+                    raw_summary=backend_output.raw_summary,
+                )
+                generation_trace["selected_backend"] = backend_output.backend_name
+                generation_trace["selected_backend_key"] = backend_key
+                generation_trace["attempts"].append(
+                    {
+                        "backend_key": backend_key,
+                        "backend_name": backend_output.backend_name,
+                        "status": "success",
+                    }
+                )
+                descriptor["generation_trace"] = deepcopy(generation_trace)
+                if backend_output.raw_response is not None:
+                    descriptor["backend_response_preview"] = backend_output.raw_response
+                return SemanticDescriptorResult(
+                    generated=True,
+                    backend=backend_output.backend_name,
+                    descriptor=descriptor,
+                    signature=signature,
+                    confidence=confidence,
+                    source_frame_ref=frame_ref,
+                )
+            except SemanticBackendError as exc:
+                rejection_reasons.append(str(exc))
+                generation_trace["attempts"].append(
+                    {
+                        "backend_key": backend_key,
+                        "backend_name": backend.backend_name,
+                        "status": "failed",
+                        "reason": str(exc),
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - defensive path
+                reason = f"unexpected_backend_error:{backend_key}:{type(exc).__name__}"
+                rejection_reasons.append(reason)
+                generation_trace["attempts"].append(
+                    {
+                        "backend_key": backend_key,
+                        "backend_name": backend.backend_name,
+                        "status": "failed",
+                        "reason": reason,
+                    }
+                )
+
+        return SemanticDescriptorResult(
+            backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
+            source_frame_ref=frame_ref,
+            rejection_reasons=rejection_reasons or ["semantic_descriptor_unavailable"],
+            descriptor={"generation_trace": generation_trace},
+        )
 
     def compare(
         self,
@@ -60,77 +181,184 @@ class SemanticDescriptorService:
 
         return round(min(1.0, score), 4)
 
-    def _generate_simple(
+    def _build_backend_chain(self, *, requested_backend: str | None) -> list[str]:
+        requested_key = self._normalize_backend_key(requested_backend)
+        chain: list[str] = []
+        for backend_key in [requested_key, self._fallback_key_for(requested_key), self.SIMPLE_BACKEND_KEY]:
+            if backend_key and backend_key not in chain:
+                chain.append(backend_key)
+        return chain
+
+    def _normalize_backend_key(self, requested_backend: str | None) -> str:
+        normalized = (requested_backend or "").strip().lower()
+        alias_map = {
+            "simple": self.SIMPLE_BACKEND_KEY,
+            "simple_color_signature_v1": self.SIMPLE_BACKEND_KEY,
+            "qwen_vl": "qwen_vl",
+            "qwen/qwen2.5-vl-3b-instruct": "qwen_vl",
+            "qwen2.5-vl-3b-instruct": "qwen_vl",
+            "smolvlm": "smolvlm",
+            "smol_vlm": "smolvlm",
+            "huggingfacetb/smolvlm2-2.2b-instruct": "smolvlm",
+            "smolvlm2-2.2b-instruct": "smolvlm",
+        }
+        return alias_map.get(normalized, self.SIMPLE_BACKEND_KEY)
+
+    def _fallback_key_for(self, requested_key: str) -> str | None:
+        if requested_key == "qwen_vl":
+            return "smolvlm"
+        if requested_key == "smolvlm":
+            return self.SIMPLE_BACKEND_KEY
+        return None
+
+    def _backend_name_for(self, backend_key: str) -> str:
+        backend = self.backends.get(backend_key)
+        if backend is None:
+            return backend_key
+        return backend.backend_name
+
+    def _normalize_descriptor(
         self,
         *,
+        raw_descriptor: dict[str, Any],
+        backend_name: str,
         frame_ref: str,
-        face_detection: FaceDetectionResult | None = None,
-        requested_backend: str | None = None,
-    ) -> SemanticDescriptorResult:
-        frame_path = self._resolve_frame_path(frame_ref)
-        if frame_path is None:
-            return SemanticDescriptorResult(
-                backend="simple_color_signature_v1",
-                source_frame_ref=frame_ref,
-                rejection_reasons=["frame_ref_not_found"],
+        face_detection: FaceDetectionResult | None,
+        confidence_override: float | None,
+        raw_summary: str | None,
+    ) -> tuple[dict[str, Any], dict[str, Any], float]:
+        descriptor = dict(raw_descriptor or {})
+        appearance = self._as_dict(descriptor.get("appearance"))
+        silhouette = self._as_dict(descriptor.get("silhouette"))
+        raw_observation_quality = (
+            descriptor.get("scene_observation_quality")
+            or descriptor.get("observation_quality")
+            or {}
+        )
+        observation_quality = self._as_dict(raw_observation_quality)
+        if not observation_quality and isinstance(raw_observation_quality, str):
+            observation_quality = {"level": raw_observation_quality}
+
+        top_clothing = self._normalize_clothing(
+            descriptor.get("top_clothing"),
+            fallback_color=appearance.get("upper_region_color"),
+            default_category="upper_garment",
+        )
+        bottom_clothing = self._normalize_clothing(
+            descriptor.get("bottom_clothing"),
+            fallback_color=appearance.get("lower_region_color"),
+            default_category="lower_garment",
+        )
+        dominant_colors = self._normalize_color_list(
+            descriptor.get("dominant_colors") or appearance.get("dominant_palette")
+        )
+        if not dominant_colors:
+            dominant_colors = self._ordered_unique(
+                [top_clothing["color"], appearance.get("middle_region_color"), bottom_clothing["color"]]
             )
 
-        image = cv2.imread(str(frame_path))
-        if image is None:
-            return SemanticDescriptorResult(
-                backend="simple_color_signature_v1",
-                source_frame_ref=frame_ref,
-                rejection_reasons=["frame_unreadable"],
-            )
+        accessories = self._normalize_string_list(
+            descriptor.get("accessories")
+            or (descriptor.get("accessories_detail") or {}).get("visible_accessories")
+        )
+        carried_object = self._normalize_label(
+            descriptor.get("carried_object")
+            or (descriptor.get("accessories_detail") or {}).get("carried_object"),
+            default="unknown",
+        )
+        body_build = self._normalize_label(descriptor.get("body_build"), default="average")
+        pose_direction = self._normalize_pose_direction(descriptor.get("pose_direction"))
+        scene_level = self._normalize_quality_level(
+            observation_quality.get("level")
+            or observation_quality.get("quality_level")
+            or observation_quality.get("descriptor_quality")
+        )
+        descriptor_confidence = self._coerce_confidence(
+            descriptor.get("descriptor_confidence")
+            or observation_quality.get("descriptor_confidence")
+            or confidence_override
+        )
+        if descriptor_confidence == 0.0 and confidence_override is not None:
+            descriptor_confidence = confidence_override
+        descriptor_confidence = round(min(1.0, max(0.0, descriptor_confidence or 0.0)), 4)
 
-        image_height, image_width = image.shape[:2]
-        grayscale = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-
-        top_region = image[0 : max(1, image_height // 3), :]
-        middle_region = image[max(1, image_height // 3) : max(2, (2 * image_height) // 3), :]
-        lower_region = image[max(2, (2 * image_height) // 3) :, :]
-
-        upper_region_color = self._label_color(top_region)
-        middle_region_color = self._label_color(middle_region)
-        lower_region_color = self._label_color(lower_region)
-        dominant_palette = self._ordered_unique([upper_region_color, middle_region_color, lower_region_color])
-
-        contrast_level = self._bucket_level(float(grayscale.std()), low=28.0, high=62.0)
-        saturation_level = self._bucket_level(float(hsv[:, :, 1].mean()), low=45.0, high=105.0)
-        frame_aspect_ratio = self._categorize_aspect_ratio(image_width=image_width, image_height=image_height)
-        horizontal_position = self._categorize_horizontal_position(face_detection=face_detection, image_width=image_width)
-        subject_scale = self._categorize_subject_scale(face_detection=face_detection, image_width=image_width, image_height=image_height)
+        frame_aspect_ratio = self._normalize_label(
+            silhouette.get("frame_aspect_ratio"),
+            default="unknown",
+        )
+        subject_scale = self._normalize_label(
+            silhouette.get("subject_scale"),
+            default="unknown",
+        )
+        horizontal_position = self._normalize_label(
+            silhouette.get("horizontal_position"),
+            default="center",
+        )
+        contrast_level = self._normalize_quality_level(
+            appearance.get("contrast_level"),
+            default="medium",
+        )
+        saturation_level = self._normalize_quality_level(
+            appearance.get("saturation_level"),
+            default="medium",
+        )
+        subject_type = self._normalize_label(descriptor.get("subject_type"), default="person")
+        middle_region_color = self._normalize_color(
+            appearance.get("middle_region_color") or (dominant_colors[1] if len(dominant_colors) > 1 else top_clothing["color"])
+        )
         face_state = self._categorize_face_state(face_detection=face_detection)
 
-        confidence = 0.62
-        if face_detection and face_detection.detected:
-            confidence += 0.12
-        if face_detection and face_detection.usable:
-            confidence += 0.1
-        if dominant_palette:
-            confidence += 0.08
-        confidence = round(min(1.0, confidence), 4)
+        observation_quality_payload = {
+            "descriptor_confidence": descriptor_confidence,
+            "face_detected": bool(face_detection and face_detection.detected),
+            "face_usable": bool(face_detection and face_detection.usable),
+            "source_region": self._normalize_label(
+                observation_quality.get("source_region"),
+                default="full_frame",
+            ),
+            "image_size": observation_quality.get("image_size")
+            or (face_detection.image_size if face_detection else None),
+            "level": scene_level,
+            "notes": self._normalize_label(observation_quality.get("notes"), default="unknown"),
+        }
 
         signature = {
-            "upper_region_color": upper_region_color,
+            "subject_type": subject_type,
+            "upper_region_color": top_clothing["color"],
             "middle_region_color": middle_region_color,
-            "lower_region_color": lower_region_color,
-            "dominant_palette": dominant_palette,
+            "lower_region_color": bottom_clothing["color"],
+            "dominant_palette": dominant_colors,
             "contrast_level": contrast_level,
             "saturation_level": saturation_level,
             "frame_aspect_ratio": frame_aspect_ratio,
             "horizontal_position": horizontal_position,
             "subject_scale": subject_scale,
             "face_state": face_state,
+            "pose_direction": pose_direction,
+            "body_build": body_build,
+            "accessories": accessories,
+            "carried_object": carried_object,
         }
-        descriptor = {
-            "backend": "simple_color_signature_v1",
+
+        normalized_descriptor = {
+            "descriptor_schema_version": "semantic_descriptor_v2",
+            "subject_type": subject_type,
+            "top_clothing": top_clothing,
+            "bottom_clothing": bottom_clothing,
+            "dominant_colors": dominant_colors,
+            "accessories": accessories,
+            "carried_object": carried_object,
+            "body_build": body_build,
+            "pose_direction": pose_direction,
+            "scene_observation_quality": observation_quality_payload,
+            "descriptor_backend": backend_name,
+            "descriptor_confidence": descriptor_confidence,
+            "raw_summary": self._normalize_summary(descriptor.get("raw_summary") or raw_summary),
             "appearance": {
-                "dominant_palette": dominant_palette,
-                "upper_region_color": upper_region_color,
+                "dominant_palette": dominant_colors,
+                "upper_region_color": top_clothing["color"],
                 "middle_region_color": middle_region_color,
-                "lower_region_color": lower_region_color,
+                "lower_region_color": bottom_clothing["color"],
                 "contrast_level": contrast_level,
                 "saturation_level": saturation_level,
             },
@@ -139,31 +367,15 @@ class SemanticDescriptorService:
                 "subject_scale": subject_scale,
                 "horizontal_position": horizontal_position,
             },
-            "accessories": {
-                "visible_accessories": [],
-                "carried_object": "unknown",
+            "accessories_detail": {
+                "visible_accessories": accessories,
+                "carried_object": carried_object,
             },
-            "observation_quality": {
-                "descriptor_confidence": confidence,
-                "face_detected": bool(face_detection and face_detection.detected),
-                "face_usable": bool(face_detection and face_detection.usable),
-                "source_region": "full_frame",
-                "image_size": {"width": int(image_width), "height": int(image_height)},
-            },
+            "observation_quality": observation_quality_payload,
             "signature": signature,
             "source_frame_ref": frame_ref,
         }
-        if requested_backend:
-            descriptor["backend_requested"] = requested_backend
-
-        return SemanticDescriptorResult(
-            generated=True,
-            backend="simple_color_signature_v1",
-            descriptor=descriptor,
-            signature=signature,
-            confidence=confidence,
-            source_frame_ref=frame_ref,
-        )
+        return normalized_descriptor, signature, descriptor_confidence
 
     def _resolve_frame_path(self, frame_ref: str) -> Path | None:
         frame_path = Path(frame_ref)
@@ -174,95 +386,170 @@ class SemanticDescriptorService:
             return relative_path
         return None
 
-    def _label_color(self, region) -> str:
-        if region.size == 0:
-            return "unknown"
+    def _normalize_clothing(
+        self,
+        raw_value: Any,
+        *,
+        fallback_color: str | None,
+        default_category: str,
+    ) -> dict[str, str]:
+        if isinstance(raw_value, dict):
+            category = self._normalize_label(raw_value.get("category"), default=default_category)
+            color = self._normalize_color(raw_value.get("color") or fallback_color)
+            pattern = self._normalize_pattern(raw_value.get("pattern"))
+            return {"category": category, "color": color, "pattern": pattern}
 
-        mean_bgr = region.reshape(-1, 3).mean(axis=0)
-        blue, green, red = [float(channel) for channel in mean_bgr]
-        hsv = cv2.cvtColor(np.uint8([[mean_bgr]]), cv2.COLOR_BGR2HSV)[0][0]
-        hue, saturation, value = [float(channel) for channel in hsv]
+        if isinstance(raw_value, str):
+            lowered = raw_value.lower()
+            category = default_category
+            for candidate in [
+                "hoodie",
+                "jacket",
+                "coat",
+                "shirt",
+                "sweater",
+                "dress",
+                "jeans",
+                "pants",
+                "shorts",
+                "skirt",
+                "uniform",
+            ]:
+                if candidate in lowered:
+                    category = candidate
+                    break
+            color = self._extract_color_from_text(lowered) or self._normalize_color(fallback_color)
+            return {"category": category, "color": color, "pattern": "solid"}
 
-        if value < 40:
-            return "black"
-        if value > 210 and saturation < 35:
-            return "white"
-        if saturation < 35:
-            return "gray"
-        if hue < 10 or hue >= 170:
-            return "red"
-        if hue < 20:
-            return "orange"
-        if hue < 34:
-            return "yellow"
-        if hue < 50:
-            return "green"
-        if hue < 85:
-            return "teal"
-        if hue < 118:
-            return "blue"
-        if hue < 140:
-            return "purple"
-        if red > 120 and green > 95 and blue < 110:
-            return "beige"
-        if red > 90 and green > 60 and blue < 70:
-            return "brown"
-        return "brown" if red >= blue else "navy"
+        return {
+            "category": default_category,
+            "color": self._normalize_color(fallback_color),
+            "pattern": "unknown",
+        }
 
-    def _ordered_unique(self, values: list[str]) -> list[str]:
+    def _normalize_color_list(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            parts = re.split(r"[;,/]| and ", value)
+            return self._ordered_unique([self._normalize_color(part) for part in parts])
+        if isinstance(value, list):
+            return self._ordered_unique([self._normalize_color(item) for item in value])
+        return []
+
+    def _normalize_string_list(self, value: Any) -> list[str]:
+        if isinstance(value, str):
+            parts = re.split(r"[;,/]| and ", value)
+            return self._ordered_unique([self._normalize_label(part, default="unknown") for part in parts])
+        if isinstance(value, list):
+            return self._ordered_unique([self._normalize_label(item, default="unknown") for item in value])
+        return []
+
+    def _normalize_color(self, value: Any) -> str:
+        lowered = self._normalize_label(value, default="unknown")
+        color_aliases = {
+            "dark blue": "blue",
+            "light blue": "blue",
+            "navy blue": "navy",
+            "deep red": "red",
+            "dark red": "red",
+            "dark gray": "gray",
+            "light gray": "gray",
+            "dark green": "green",
+            "light green": "green",
+            "tan": "beige",
+        }
+        if lowered in color_aliases:
+            return color_aliases[lowered]
+        for color in [
+            "black",
+            "white",
+            "gray",
+            "red",
+            "orange",
+            "yellow",
+            "green",
+            "teal",
+            "blue",
+            "navy",
+            "purple",
+            "brown",
+            "beige",
+        ]:
+            if color in lowered:
+                return color
+        return lowered
+
+    def _extract_color_from_text(self, text: str) -> str | None:
+        normalized = self._normalize_color(text)
+        if normalized == "unknown":
+            return None
+        return normalized
+
+    def _normalize_label(self, value: Any, *, default: str = "unknown") -> str:
+        if value is None:
+            return default
+        cleaned = str(value).strip().lower().replace("-", "_")
+        cleaned = " ".join(cleaned.split())
+        if not cleaned:
+            return default
+        return cleaned
+
+    def _normalize_pattern(self, value: Any) -> str:
+        normalized = self._normalize_label(value, default="unknown")
+        if normalized in {"plain", "solid_color"}:
+            return "solid"
+        if "stripe" in normalized:
+            return "striped"
+        if "plaid" in normalized or "check" in normalized:
+            return "plaid"
+        if "graphic" in normalized or "logo" in normalized:
+            return "graphic"
+        return normalized
+
+    def _normalize_pose_direction(self, value: Any) -> str:
+        normalized = self._normalize_label(value, default="front")
+        if normalized in {"slightly_left", "left_facing"}:
+            return "left"
+        if normalized in {"slightly_right", "right_facing"}:
+            return "right"
+        if normalized in {"forward", "frontal"}:
+            return "front"
+        return normalized
+
+    def _normalize_quality_level(self, value: Any, *, default: str = "medium") -> str:
+        normalized = self._normalize_label(value, default=default)
+        if normalized in {"moderate", "mid"}:
+            return "medium"
+        if normalized in {"very_high"}:
+            return "high"
+        if normalized in {"very_low"}:
+            return "low"
+        return normalized
+
+    def _normalize_summary(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        summary = " ".join(str(value).split()).strip()
+        return summary or None
+
+    def _coerce_confidence(self, value: Any) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _ordered_unique(self, values: list[str | None]) -> list[str]:
         ordered: list[str] = []
         for value in values:
-            if value not in ordered and value != "unknown":
-                ordered.append(value)
-        return ordered[:3]
+            normalized = self._normalize_label(value, default="unknown")
+            if normalized == "unknown" or normalized in ordered:
+                continue
+            ordered.append(normalized)
+        return ordered[:4]
 
-    def _bucket_level(self, value: float, *, low: float, high: float) -> str:
-        if value < low:
-            return "low"
-        if value < high:
-            return "medium"
-        return "high"
-
-    def _categorize_aspect_ratio(self, *, image_width: int, image_height: int) -> str:
-        ratio = image_width / max(1, image_height)
-        if ratio > 1.15:
-            return "landscape"
-        if ratio < 0.85:
-            return "portrait"
-        return "square"
-
-    def _categorize_horizontal_position(
-        self,
-        *,
-        face_detection: FaceDetectionResult | None,
-        image_width: int,
-    ) -> str:
-        if face_detection and face_detection.bbox:
-            center_x = face_detection.bbox["x"] + (face_detection.bbox["width"] / 2.0)
-            normalized = center_x / max(1, image_width)
-            if normalized < 0.4:
-                return "left"
-            if normalized > 0.6:
-                return "right"
-        return "center"
-
-    def _categorize_subject_scale(
-        self,
-        *,
-        face_detection: FaceDetectionResult | None,
-        image_width: int,
-        image_height: int,
-    ) -> str:
-        if face_detection and face_detection.bbox:
-            face_area = face_detection.bbox["width"] * face_detection.bbox["height"]
-            image_area = max(1, image_width * image_height)
-            ratio = face_area / image_area
-            if ratio >= 0.12:
-                return "close_up"
-            if ratio >= 0.04:
-                return "upper_body"
-            return "distant"
-        return "unknown"
+    def _as_dict(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return dict(value)
+        return {}
 
     def _categorize_face_state(self, *, face_detection: FaceDetectionResult | None) -> str:
         if face_detection is None:

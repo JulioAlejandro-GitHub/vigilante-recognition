@@ -1,0 +1,17 @@
+{
+  "subject_type": "Person",
+  "top_clothing": "red hoodie",
+  "bottom_clothing": {
+    "category": "jeans",
+    "color": "dark blue",
+    "pattern": null
+  },
+  "dominant_colors": "red, dark blue",
+  "accessories": "backpack, cap",
+  "carried_object": null,
+  "body_build": "average",
+  "pose_direction": "slightly_left",
+  "scene_observation_quality": "moderate",
+  "descriptor_confidence": "0.77",
+  "raw_summary": "Single person wearing a red hoodie and dark blue jeans."
+}

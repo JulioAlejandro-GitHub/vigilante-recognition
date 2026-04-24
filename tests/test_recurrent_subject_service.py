@@ -22,7 +22,22 @@ def _descriptor(upper: str, middle: str, lower: str) -> SemanticDescriptorResult
     return SemanticDescriptorResult(
         generated=True,
         backend="simple_color_signature_v1",
-        descriptor={"signature": signature},
+        descriptor={
+            "descriptor_schema_version": "semantic_descriptor_v2",
+            "descriptor_backend": "simple_color_signature_v1",
+            "descriptor_confidence": 0.84,
+            "top_clothing": {"category": "upper_garment", "color": upper, "pattern": "solid"},
+            "bottom_clothing": {"category": "lower_garment", "color": lower, "pattern": "solid"},
+            "dominant_colors": [upper, middle, lower],
+            "accessories": [],
+            "carried_object": "unknown",
+            "body_build": "average",
+            "pose_direction": "front",
+            "scene_observation_quality": {"level": "medium", "notes": "stable"},
+            "appearance": {"dominant_palette": [upper, middle, lower]},
+            "silhouette": {"frame_aspect_ratio": "portrait", "subject_scale": "upper_body", "horizontal_position": "center"},
+            "signature": signature,
+        },
         signature=signature,
         confidence=0.84,
         source_frame_ref="tests/fixtures/images/face_low_quality.jpg",
@@ -82,6 +97,7 @@ def test_recurrent_subject_resolution_emits_recurrence_and_manual_review():
         "recurrent_unresolved_subject",
         "manual_review_required",
     ]
+    assert resolution.supplemental_decisions[1].payload["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
 
 
 def test_recurrent_subject_resolution_emits_case_suggestion_on_third_occurrence():
@@ -127,6 +143,7 @@ def test_recurrent_subject_resolution_emits_case_suggestion_on_third_occurrence(
         "manual_review_required",
         "case_suggestion_created",
     ]
+    assert resolution.supplemental_decisions[2].payload["semantic_descriptor"]["descriptor_backend"] == "simple_color_signature_v1"
 
 
 def test_recurrent_subject_assessment_rejects_low_similarity_candidates():
