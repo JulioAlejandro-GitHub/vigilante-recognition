@@ -8,14 +8,20 @@ from app.config import settings
 from app.consumer import load_fixture_message
 from app.db import get_session, init_db
 from app.domain.entities import (
+    FrameIngestedMessage,
     InvalidCameraIdError,
     RecurrentSubjectResolution,
     SemanticDescriptorResult,
 )
 from app.domain.events import build_recognition_event
+from app.ingestion import InvalidFrameIngestedEventError, InvalidJsonlLineError
 from app.infra.repository import RecognitionRepository
 from app.logging import configure_logging
 from app.publisher import EventPublisher
+from app.runner.process_ingestion_outbox import (
+    ProcessIngestionOutboxResult,
+    process_ingestion_outbox,
+)
 from app.services.conflict_resolution_service import ConflictResolutionService
 from app.services.cross_camera_correlation_service import CrossCameraCorrelationService
 from app.services.face_embedding_service import FaceEmbeddingService
@@ -24,6 +30,7 @@ from app.services.presence_service import PresenceService
 from app.services.recurrent_subject_service import RecurrentSubjectService
 from app.services.semantic_descriptor_service import SemanticDescriptorService
 from app.services.track_service import TrackService
+from app.storage.frame_resolver import FrameResolutionError
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +77,10 @@ def _safe_generate_semantic_descriptor(
 
 def process_fixture(fixture_path: str) -> dict:
     message = load_fixture_message(fixture_path)
+    return process_message(message)
 
+
+def process_message(message: FrameIngestedMessage) -> dict:
     with get_session() as session:
         repo = RecognitionRepository(session)
         track_service = TrackService(repo)
@@ -394,20 +404,43 @@ def process_fixture(fixture_path: str) -> dict:
         return event
 
 
+def process_ingestion_jsonl(jsonl_path: str) -> ProcessIngestionOutboxResult:
+    return process_ingestion_outbox(
+        jsonl_path,
+        processor=process_message,
+        frame_search_roots=settings.ingestion_frame_search_root_paths,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 7")
-    parser.add_argument("--fixture", required=True, help="Path to frame.ingested example JSON")
+    parser.add_argument("--fixture", help="Path to frame.ingested example JSON")
+    parser.add_argument(
+        "--ingestion-jsonl",
+        help="Path to vigilante-ingestion JSONL outbox with frame.ingested events",
+    )
     args = parser.parse_args()
+    if bool(args.fixture) == bool(args.ingestion_jsonl):
+        parser.error("Provide exactly one of --fixture or --ingestion-jsonl")
 
     configure_logging(settings.log_level)
     init_db()
     try:
-        event = process_fixture(args.fixture)
-    except InvalidCameraIdError as exc:
+        if args.fixture:
+            event = process_fixture(args.fixture)
+            logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
+            return
+
+        result = process_ingestion_jsonl(args.ingestion_jsonl)
+    except (InvalidCameraIdError, InvalidFrameIngestedEventError, InvalidJsonlLineError, FrameResolutionError) as exc:
         logger.error("worker_failed reason=%s", exc)
         raise SystemExit(2) from exc
 
-    logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
+    logger.info(
+        "worker_finished ingestion_jsonl=%s processed=%s",
+        result.source_path,
+        result.processed,
+    )
 
 
 if __name__ == "__main__":

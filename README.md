@@ -122,6 +122,49 @@ PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_manual_review_
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_recurrent_unresolved.json
 ```
 
+## Integración local con vigilante-ingestion
+
+El worker también puede consumir eventos reales `frame.ingested` desde el outbox
+JSONL generado por `vigilante-ingestion`.
+
+Flujo reproducible:
+
+```bash
+cd ../vigilante-ingestion
+source .venv/bin/activate
+PYTHONPATH=. python -m app.main --source-file samples/cam01.mp4 --camera-id 11111111-1111-1111-1111-111111111111 --fps 1 --max-frames 10
+
+cd ../vigilante-recognition
+source .venv/bin/activate
+PYTHONPATH=. pytest
+PYTHONPATH=. python -m app.worker --ingestion-jsonl ../vigilante-ingestion/outbox/frame_ingested.jsonl
+```
+
+El modo JSONL reutiliza el mismo pipeline que `--fixture`, por lo que persiste en:
+
+- `recognition.observed_subject`
+- `recognition.human_track`
+- `recognition.recognition_event`
+- `outbox.event_outbox`
+
+### Resolución de frames
+
+La estrategia de resolución local es:
+
+1. si `payload.frame_uri` existe y apunta a un archivo local, se usa ese path;
+2. si no, se intenta `payload.frame_ref`;
+3. si el valor es relativo, se resuelve contra el directorio actual y luego contra
+   `INGESTION_FRAME_SEARCH_ROOTS`, si está configurado.
+
+`payload.frame_ref` sigue siendo el campo canónico del contrato. Cuando el loader
+necesita usar `frame_uri` para abrir el archivo local, pasa al pipeline una copia
+del mensaje con `payload.frame_ref` resuelto al path físico y conserva los valores
+originales en `payload.metadata.original_frame_ref` /
+`payload.metadata.original_frame_uri`.
+
+Este slice no resuelve `s3://` ni MinIO dentro de recognition; esos URI quedan
+preparados para una integración posterior con MinIO o `vigilante-media`.
+
 ### Backend VLM opcional
 
 El worker puede usar un backend VLM real, pero no es obligatorio para tests ni smoke tests.
@@ -193,6 +236,8 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
 - `RECURRENT_SUBJECT_THRESHOLD=0.78`
 - `CASE_SUGGESTION_THRESHOLD=0.9`
+- `INGESTION_JSONL_PATH=../vigilante-ingestion/outbox/frame_ingested.jsonl`
+- `INGESTION_FRAME_SEARCH_ROOTS=` separado por comas cuando `frame_ref` es relativo
 
 ## Pendiente después del Slice 7
 
@@ -200,10 +245,10 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `candidate_match`
 - correlación cross-camera avanzada
 - optimización de rendimiento VLM real para operación sostenida de producción
-- integración real con media
+- consumo RabbitMQ real de `vigilante.frames`
+- resolución MinIO / `vigilante-media`
 - integración real con alerting
 - revisión humana
-- Integración real con RabbitMQ en `consumer.py` y `publisher.py`
 
 ## Contrato que consume
 

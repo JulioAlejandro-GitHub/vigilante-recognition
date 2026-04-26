@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,6 +42,8 @@ class Settings(BaseSettings):
     semantic_similarity_threshold: float = 0.72
     recurrent_subject_threshold: float = 0.78
     case_suggestion_threshold: float = 0.9
+    ingestion_jsonl_path: str = "../vigilante-ingestion/outbox/frame_ingested.jsonl"
+    ingestion_frame_search_roots: str = ""
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -51,6 +55,14 @@ class Settings(BaseSettings):
             f"postgresql+psycopg://{self.db_user}:{password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
         )
+
+    @property
+    def ingestion_frame_search_root_paths(self) -> list[Path]:
+        return [
+            Path(raw_path.strip())
+            for raw_path in self.ingestion_frame_search_roots.split(",")
+            if raw_path.strip()
+        ]
 
 
 settings = Settings()

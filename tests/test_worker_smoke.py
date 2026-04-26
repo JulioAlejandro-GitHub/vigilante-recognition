@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from uuid import UUID, uuid4
 from unittest.mock import MagicMock, patch
 
@@ -16,7 +18,7 @@ from app.domain.entities import (
     SupplementalRecognitionDecision,
 )
 from app.models import CrossCameraCorrelation, EventOutbox, HumanTrack, RecognitionEvent
-from app.worker import process_fixture
+from app.worker import process_fixture, process_ingestion_jsonl
 
 CAMERA_ID = "11111111-1111-1111-1111-111111111111"
 CAMERA_B_ID = "22222222-1111-1111-1111-111111111111"
@@ -965,3 +967,72 @@ def test_process_fixture_fails_with_clear_invalid_uuid_error(mock_load_fixture_m
 
     mock_repo_instance.create_subject.assert_not_called()
     mock_session.commit.assert_not_called()
+
+
+@patch("app.worker.RecognitionRepository")
+@patch("app.worker.get_session")
+def test_process_ingestion_jsonl_runs_worker_pipeline_with_resolved_frame(mock_get_session, mock_repo_class, tmp_path):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    mock_repo_instance = MagicMock()
+    resolved_camera_id = UUID(CAMERA_ID)
+    subject_id = uuid4()
+    track_id = uuid4()
+    recognition_event_id = uuid4()
+
+    subject = MagicMock()
+    subject.observed_subject_id = subject_id
+
+    track = MagicMock()
+    track.human_track_id = track_id
+    track.camera_id = resolved_camera_id
+    track.person_presence_score = 0.0
+
+    _configure_repo_for_slice3_flow(
+        mock_repo_instance,
+        subject=subject,
+        track=track,
+        recognition_event=_make_recognition_event(recognition_event_id),
+    )
+    mock_repo_class.return_value = mock_repo_instance
+
+    frame_path = Path("tests/fixtures/images/face_low_quality.jpg").resolve()
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(
+        json.dumps(
+            {
+                "event_id": "evt_ingestion_real_frame",
+                "event_type": "frame.ingested",
+                "event_version": "1.0",
+                "occurred_at": "2026-01-01T00:00:00.000Z",
+                "payload": {
+                    "camera_id": CAMERA_ID,
+                    "captured_at": "2026-01-01T00:00:00.000Z",
+                    "content_type": "image/jpeg",
+                    "frame_ref": "logical-frame-ref.jpg",
+                    "frame_uri": str(frame_path),
+                    "height": 120,
+                    "quality_metadata": {"capture_fps": 1.0},
+                    "source_type": "video_file",
+                    "width": 120,
+                },
+                "context": {
+                    "correlation_id": "corr_ingestion_real_frame",
+                    "idempotency_key": "frame:test",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = process_ingestion_jsonl(str(jsonl_path))
+
+    assert result.processed == 1
+    assert result.emitted_events[0]["context"]["camera_id"] == CAMERA_ID
+    recognition_event_call = mock_repo_instance.add_recognition_event.call_args.kwargs
+    assert recognition_event_call["camera_id"] == resolved_camera_id
+    assert recognition_event_call["evidence_refs"] == [str(frame_path)]
+    assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
+    mock_session.commit.assert_called_once()

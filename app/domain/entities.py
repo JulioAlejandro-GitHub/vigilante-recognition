@@ -16,7 +16,13 @@ class FramePayload(BaseModel):
     external_camera_key: Optional[str] = None
     captured_at: datetime
     frame_ref: str
+    frame_uri: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    content_type: Optional[str] = None
+    source_type: Optional[str] = None
     quality_metadata: dict[str, float] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class FrameIngestedMessage(BaseModel):
