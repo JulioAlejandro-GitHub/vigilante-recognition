@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     case_suggestion_threshold: float = 0.9
     ingestion_jsonl_path: str = "../vigilante-ingestion/outbox/frame_ingested.jsonl"
     ingestion_frame_search_roots: str = ""
+    ingestion_checkpoint_path: str = ".runtime/ingestion/checkpoints.json"
+    ingestion_deduper_path: str = ".runtime/ingestion/processed_events.json"
+    ingestion_rejected_events_path: str = ".runtime/ingestion/rejected_events.jsonl"
+    ingestion_track_continuity_window_seconds: int = 15
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

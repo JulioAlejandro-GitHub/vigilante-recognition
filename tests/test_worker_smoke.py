@@ -1027,7 +1027,12 @@ def test_process_ingestion_jsonl_runs_worker_pipeline_with_resolved_frame(mock_g
         encoding="utf-8",
     )
 
-    result = process_ingestion_jsonl(str(jsonl_path))
+    result = process_ingestion_jsonl(
+        str(jsonl_path),
+        checkpoint_path=str(tmp_path / "state" / "checkpoint.json"),
+        deduper_path=str(tmp_path / "state" / "processed_events.json"),
+        rejected_events_path=str(tmp_path / "state" / "rejected_events.jsonl"),
+    )
 
     assert result.processed == 1
     assert result.emitted_events[0]["context"]["camera_id"] == CAMERA_ID

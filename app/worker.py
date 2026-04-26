@@ -404,11 +404,24 @@ def process_message(message: FrameIngestedMessage) -> dict:
         return event
 
 
-def process_ingestion_jsonl(jsonl_path: str) -> ProcessIngestionOutboxResult:
+def process_ingestion_jsonl(
+    jsonl_path: str,
+    *,
+    force_replay: bool = False,
+    checkpoint_path: str | None = None,
+    deduper_path: str | None = None,
+    rejected_events_path: str | None = None,
+) -> ProcessIngestionOutboxResult:
+    from app.ingestion import FileCheckpointStore, FileEventDeduper, RejectedEventStore
+
     return process_ingestion_outbox(
         jsonl_path,
         processor=process_message,
         frame_search_roots=settings.ingestion_frame_search_root_paths,
+        checkpoint_store=FileCheckpointStore(checkpoint_path or settings.ingestion_checkpoint_path),
+        event_deduper=FileEventDeduper(deduper_path or settings.ingestion_deduper_path),
+        rejected_event_store=RejectedEventStore(rejected_events_path or settings.ingestion_rejected_events_path),
+        force_replay=force_replay,
     )
 
 
@@ -418,6 +431,23 @@ def main() -> None:
     parser.add_argument(
         "--ingestion-jsonl",
         help="Path to vigilante-ingestion JSONL outbox with frame.ingested events",
+    )
+    parser.add_argument(
+        "--force-replay",
+        action="store_true",
+        help="Replay the JSONL from byte offset 0 and ignore persisted event_id dedupe for this run.",
+    )
+    parser.add_argument(
+        "--ingestion-checkpoint-path",
+        help="Local checkpoint JSON path. Defaults to INGESTION_CHECKPOINT_PATH.",
+    )
+    parser.add_argument(
+        "--ingestion-deduper-path",
+        help="Local processed event_id registry path. Defaults to INGESTION_DEDUPER_PATH.",
+    )
+    parser.add_argument(
+        "--ingestion-rejected-path",
+        help="Local rejected events JSONL path. Defaults to INGESTION_REJECTED_EVENTS_PATH.",
     )
     args = parser.parse_args()
     if bool(args.fixture) == bool(args.ingestion_jsonl):
@@ -431,15 +461,37 @@ def main() -> None:
             logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
             return
 
-        result = process_ingestion_jsonl(args.ingestion_jsonl)
+        result = process_ingestion_jsonl(
+            args.ingestion_jsonl,
+            force_replay=args.force_replay,
+            checkpoint_path=args.ingestion_checkpoint_path,
+            deduper_path=args.ingestion_deduper_path,
+            rejected_events_path=args.ingestion_rejected_path,
+        )
     except (InvalidCameraIdError, InvalidFrameIngestedEventError, InvalidJsonlLineError, FrameResolutionError) as exc:
         logger.error("worker_failed reason=%s", exc)
         raise SystemExit(2) from exc
 
     logger.info(
-        "worker_finished ingestion_jsonl=%s processed=%s",
+        (
+            "worker_finished ingestion_jsonl=%s read=%s processed=%s "
+            "skipped_checkpoint=%s skipped_duplicate=%s rejected=%s "
+            "frame_resolution_errors=%s processing_errors=%s start_offset=%s final_offset=%s "
+            "checkpoint_path=%s deduper_path=%s rejected_events_path=%s"
+        ),
         result.source_path,
+        result.read,
         result.processed,
+        result.skipped_checkpoint,
+        result.skipped_duplicate,
+        result.rejected,
+        result.frame_resolution_errors,
+        result.processing_errors,
+        result.start_offset,
+        result.final_offset,
+        result.checkpoint_path,
+        result.deduper_path,
+        result.rejected_events_path,
     )
 
 

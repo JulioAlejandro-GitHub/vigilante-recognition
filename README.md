@@ -138,6 +138,7 @@ cd ../vigilante-recognition
 source .venv/bin/activate
 PYTHONPATH=. pytest
 PYTHONPATH=. python -m app.worker --ingestion-jsonl ../vigilante-ingestion/outbox/frame_ingested.jsonl
+PYTHONPATH=. python -m app.worker --ingestion-jsonl ../vigilante-ingestion/outbox/frame_ingested.jsonl
 ```
 
 El modo JSONL reutiliza el mismo pipeline que `--fixture`, por lo que persiste en:
@@ -146,6 +147,60 @@ El modo JSONL reutiliza el mismo pipeline que `--fixture`, por lo que persiste e
 - `recognition.human_track`
 - `recognition.recognition_event`
 - `outbox.event_outbox`
+
+La segunda corrida del mismo archivo no debe reprocesar las líneas ya consumidas.
+El worker registra contadores de `read`, `processed`, `skipped_checkpoint`,
+`skipped_duplicate`, `rejected` y `frame_resolution_errors`.
+
+Para forzar un replay completo desde el byte 0:
+
+```bash
+PYTHONPATH=. python -m app.worker --ingestion-jsonl ../vigilante-ingestion/outbox/frame_ingested.jsonl --force-replay
+```
+
+`--force-replay` ignora el checkpoint y el dedupe persistido para esa corrida,
+pero sigue evitando duplicados de `event_id` dentro del mismo archivo leído.
+
+### Checkpoint, idempotencia y rejected events
+
+El consumo JSONL usa estado local simple bajo `.runtime/ingestion/`:
+
+- `.runtime/ingestion/checkpoints.json`: checkpoint por path resuelto y byte offset
+- `.runtime/ingestion/processed_events.json`: registro local de `event_id` procesados
+- `.runtime/ingestion/rejected_events.jsonl`: DLQ local de eventos inválidos o no procesables
+
+Se pueden cambiar por CLI:
+
+```bash
+PYTHONPATH=. python -m app.worker \
+  --ingestion-jsonl ../vigilante-ingestion/outbox/frame_ingested.jsonl \
+  --ingestion-checkpoint-path .runtime/ingestion/checkpoints.json \
+  --ingestion-deduper-path .runtime/ingestion/processed_events.json \
+  --ingestion-rejected-path .runtime/ingestion/rejected_events.jsonl
+```
+
+El worker no aborta por una línea aislada inválida. Registra en rejected events
+al menos `reason`, `source_path`, `line_number`, `offset`, `event_id` si existe,
+`event_type` si existe, `rejected_at` y detalles del error. Los motivos cubiertos
+incluyen JSON inválido, evento sin `event_type`, `event_type` no soportado,
+`camera_id` inválido, falta de `frame_ref`/`frame_uri` y frame no resoluble.
+
+### Continuidad local entre frames
+
+Antes de invocar el pipeline de recognition, el runner aplica una continuidad
+temporal ligera para JSONL:
+
+- agrupa por misma cámara UUID, `payload.source_type`, `payload.external_camera_key`
+  y `payload.metadata.source_uri`
+- reutiliza el track local reciente si el siguiente frame cae dentro de
+  `INGESTION_TRACK_CONTINUITY_WINDOW_SECONDS`
+- reemplaza `context.correlation_id` por una clave `local_track_*` estable para
+  ese tramo y conserva el valor anterior en `context.original_correlation_id`
+- agrega `context.track_continuity` con estrategia, estado y señales usadas
+
+Esto permite que frames consecutivos de una misma fuente actualicen el mismo
+`human_track` básico en vez de abrir una aparición totalmente independiente por
+cada frame. No es tracking multicámara ni reemplaza la correlación avanzada.
 
 ### Resolución de frames
 
@@ -238,6 +293,10 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `CASE_SUGGESTION_THRESHOLD=0.9`
 - `INGESTION_JSONL_PATH=../vigilante-ingestion/outbox/frame_ingested.jsonl`
 - `INGESTION_FRAME_SEARCH_ROOTS=` separado por comas cuando `frame_ref` es relativo
+- `INGESTION_CHECKPOINT_PATH=.runtime/ingestion/checkpoints.json`
+- `INGESTION_DEDUPER_PATH=.runtime/ingestion/processed_events.json`
+- `INGESTION_REJECTED_EVENTS_PATH=.runtime/ingestion/rejected_events.jsonl`
+- `INGESTION_TRACK_CONTINUITY_WINDOW_SECONDS=15`
 
 ## Pendiente después del Slice 7
 
@@ -247,6 +306,8 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - optimización de rendimiento VLM real para operación sostenida de producción
 - consumo RabbitMQ real de `vigilante.frames`
 - resolución MinIO / `vigilante-media`
+- reemplazar el DLQ local JSONL por DLQ/outbox conectado a la cola real
+- adaptar checkpoint/dedupe local a acknowledgement/idempotencia del broker
 - integración real con alerting
 - revisión humana
 
