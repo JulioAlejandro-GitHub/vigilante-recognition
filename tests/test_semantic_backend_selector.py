@@ -150,3 +150,79 @@ def test_selector_falls_back_to_simple_when_all_real_backends_fail():
     attempts = descriptor.descriptor["generation_trace"]["attempts"]
     assert [attempt["backend_key"] for attempt in attempts] == ["qwen_vl", "smolvlm", "simple"]
     assert attempts[-1]["status"] == "success"
+
+
+def test_selector_records_timeout_details_and_uses_secondary_vlm():
+    fixture = load_fixture_message("tests/fixtures/frame_ingested_no_face.json")
+    service = SemanticDescriptorService(
+        backends={
+            "qwen_vl": StubSemanticBackend(
+                key="qwen_vl",
+                backend_name="Qwen/Qwen2.5-VL-3B-Instruct",
+                error=SemanticBackendError(
+                    "backend_timeout",
+                    details={"stage": "runtime", "timeout_seconds": 3},
+                ),
+            ),
+            "smolvlm": StubSemanticBackend(
+                key="smolvlm",
+                backend_name="HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+                descriptor=_minimal_descriptor("gray"),
+            ),
+            "simple": StubSemanticBackend(
+                key="simple",
+                backend_name="simple_color_signature_v1",
+                descriptor=_minimal_descriptor("blue"),
+            ),
+        }
+    )
+
+    with patch.object(settings, "semantic_use_real_vlm", True), patch.object(
+        settings,
+        "semantic_descriptor_backend",
+        "qwen_vl",
+    ):
+        descriptor = service.generate(frame_ref=fixture.frame_ref)
+
+    assert descriptor.generated is True
+    assert descriptor.backend == "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+    attempts = descriptor.descriptor["generation_trace"]["attempts"]
+    assert attempts[0]["reason"] == "backend_timeout"
+    assert attempts[0]["stage"] == "runtime"
+    assert attempts[0]["timeout_seconds"] == 3
+    assert attempts[1]["status"] == "success"
+
+
+def test_selector_can_disable_secondary_vlm_fallback():
+    fixture = load_fixture_message("tests/fixtures/frame_ingested_no_face.json")
+    service = SemanticDescriptorService(
+        backends={
+            "qwen_vl": StubSemanticBackend(
+                key="qwen_vl",
+                backend_name="Qwen/Qwen2.5-VL-3B-Instruct",
+                error=SemanticBackendError("model_load_failed:RuntimeError"),
+            ),
+            "smolvlm": StubSemanticBackend(
+                key="smolvlm",
+                backend_name="HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+                descriptor=_minimal_descriptor("gray"),
+            ),
+            "simple": StubSemanticBackend(
+                key="simple",
+                backend_name="simple_color_signature_v1",
+                descriptor=_minimal_descriptor("blue"),
+            ),
+        }
+    )
+
+    with patch.object(settings, "semantic_use_real_vlm", True), patch.object(
+        settings,
+        "semantic_descriptor_backend",
+        "qwen_vl",
+    ), patch.object(settings, "semantic_enable_fallback", False):
+        descriptor = service.generate(frame_ref=fixture.frame_ref)
+
+    assert descriptor.generated is True
+    assert descriptor.backend == "simple_color_signature_v1"
+    attempts = descriptor.descriptor["generation_trace"]["attempts"]
+    assert [attempt["backend_key"] for attempt in attempts] == ["qwen_vl", "simple"]

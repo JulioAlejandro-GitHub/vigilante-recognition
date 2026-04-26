@@ -114,6 +114,13 @@ class SimpleSemanticDescriptorBackend(SemanticDescriptorBackend):
             descriptor=descriptor,
             confidence=confidence,
             raw_summary=descriptor["raw_summary"],
+            trace={
+                "backend_key": self.key,
+                "runtime": "in_process",
+                "device": "cpu",
+                "requested_device": "cpu",
+                "dtype": "float32",
+            },
         )
 
     def _label_color(self, region) -> str:

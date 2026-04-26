@@ -4,9 +4,9 @@
 
 `vigilante-recognition` es el subsistema responsable de detectar presencia humana, construir tracks por cámara, evaluar rostro usable, extraer embeddings, correlacionar apariciones y emitir decisiones explicables para seguridad y operación.
 
-## Alcance del Slice 6
+## Alcance del Slice 7
 
-Este slice reemplaza la capa semántica heurística del Slice 5 por una arquitectura enchufable de backends, manteniendo intacto el flujo ya funcional de Slice 1–5.
+Este slice vuelve operativa la arquitectura semántica enchufable introducida en Slice 6, manteniendo intacto el flujo ya funcional de Slice 1–6.
 
 Su objetivo actual es dejar un bootstrap funcional para:
 
@@ -42,7 +42,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `event_outbox`
   - `cross_camera_correlation`
 
-### Decisión del Slice 6
+### Decisión del Slice 7
 
 - si hay presencia humana confirmada, se detecta un rostro con `quality_score >= 0.75` y el match supera `FACE_MATCH_THRESHOLD` con margen suficiente, el worker emite `face_detected_identified`
 - si hay presencia humana confirmada y se detecta un rostro usable pero sin match confiable, el worker emite `face_detected_unidentified`
@@ -65,7 +65,10 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `smolvlm` para `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
   - `simple` para `simple_color_signature_v1`
 - si `SEMANTIC_USE_REAL_VLM=false`, los backends VLM se omiten y el worker cae al backend simple sin romper el flujo
-- si el backend principal devuelve salida inválida o falla, el worker intenta fallback y registra la traza de intentos en `semantic_descriptor.generation_trace`
+- si `SEMANTIC_USE_REAL_VLM=true`, el backend real se ejecuta en subprocess aislado para proteger el worker ante timeouts o fallos de carga/inferencia
+- el selector de device soporta `cpu`, `mps`, `cuda` y `auto`, con resolución robusta y trazabilidad en `semantic_descriptor.generation_trace`
+- si el backend principal devuelve salida inválida, hace timeout o falla al cargar/inferir, el worker intenta fallback y registra la traza de intentos en `semantic_descriptor.generation_trace`
+- si el fallback también falla, el worker degrada al backend simple sin descargar modelos adicionales
 
 ### Resolución de cámara en Slice 1
 
@@ -102,17 +105,21 @@ El fixture y los mensajes de entrada deben traer `payload.camera_id` como UUID v
 PYTHONPATH=. pytest
 ```
 
-4. Ejecuta el worker usando los fixtures principales:
+4. Ejecuta exactamente estos smoke tests base:
 ```bash
-PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_example.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_no_face.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_unidentified.json
+PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_case_suggestion_created.json
+```
+
+5. Si quieres recorrer fixtures adicionales, también siguen disponibles:
+```bash
+PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_example.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_identified.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_cross_camera_positive.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_identity_conflict.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_manual_review_required.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_recurrent_unresolved.json
-PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_case_suggestion_created.json
 ```
 
 ### Backend VLM opcional
@@ -123,8 +130,27 @@ El worker puede usar un backend VLM real, pero no es obligatorio para tests ni s
 - Para entorno real: configura `SEMANTIC_USE_REAL_VLM=true`
 - Backend canónico: `SEMANTIC_VLM_PRIMARY_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`
 - Fallback: `SEMANTIC_VLM_FALLBACK_MODEL=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- Device: `SEMANTIC_DEVICE=auto|cpu|mps|cuda`
+- Fallback automático: `SEMANTIC_ENABLE_FALLBACK=true`
 
-Si quieres habilitar inferencia real fuera de esta suite, instala dependencias opcionales compatibles como `transformers`, `torch` y `Pillow`. No forman parte de `requirements.txt` para mantener la validación local rápida.
+Las dependencias VLM están aisladas para no volver pesada la instalación base:
+
+```bash
+pip install -r requirements-vlm.txt
+```
+
+Validación local explícita del backend real:
+
+```bash
+export SEMANTIC_USE_REAL_VLM=true
+export SEMANTIC_DESCRIPTOR_BACKEND=qwen_vl
+export SEMANTIC_ENABLE_FALLBACK=true
+export SEMANTIC_DEVICE=auto
+export SEMANTIC_TIMEOUT_SECONDS=45
+PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_no_face.json
+```
+
+Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` y luego degrada a `simple`. Para desarrollo liviano y CI, mantén `SEMANTIC_USE_REAL_VLM=false`.
 
 ## Fixtures incluidos
 
@@ -161,17 +187,19 @@ Si quieres habilitar inferencia real fuera de esta suite, instala dependencias o
 - `SEMANTIC_USE_REAL_VLM=false`
 - `SEMANTIC_VLM_PRIMARY_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`
 - `SEMANTIC_VLM_FALLBACK_MODEL=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- `SEMANTIC_DEVICE=auto`
 - `SEMANTIC_TIMEOUT_SECONDS=45`
+- `SEMANTIC_ENABLE_FALLBACK=true`
 - `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
 - `RECURRENT_SUBJECT_THRESHOLD=0.78`
 - `CASE_SUGGESTION_THRESHOLD=0.9`
 
-## Pendiente para Slice 6
+## Pendiente después del Slice 7
 
 - reemplazar el backend liviano por un motor facial real como InsightFace
 - `candidate_match`
 - correlación cross-camera avanzada
-- endurecer la ejecución real de VLM para producción con manejo de device, batching y timeouts más robustos
+- optimización de rendimiento VLM real para operación sostenida de producción
 - integración real con media
 - integración real con alerting
 - revisión humana

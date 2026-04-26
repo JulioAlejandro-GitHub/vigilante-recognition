@@ -34,7 +34,9 @@ class Settings(BaseSettings):
     semantic_use_real_vlm: bool = False
     semantic_vlm_primary_model: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     semantic_vlm_fallback_model: str = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+    semantic_device: str = "auto"
     semantic_timeout_seconds: int = 45
+    semantic_enable_fallback: bool = True
     semantic_similarity_threshold: float = 0.72
     recurrent_subject_threshold: float = 0.78
     case_suggestion_threshold: float = 0.9

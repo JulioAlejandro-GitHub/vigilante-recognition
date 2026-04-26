@@ -7,7 +7,11 @@ from uuid import UUID
 from app.config import settings
 from app.consumer import load_fixture_message
 from app.db import get_session, init_db
-from app.domain.entities import InvalidCameraIdError, RecurrentSubjectResolution
+from app.domain.entities import (
+    InvalidCameraIdError,
+    RecurrentSubjectResolution,
+    SemanticDescriptorResult,
+)
 from app.domain.events import build_recognition_event
 from app.infra.repository import RecognitionRepository
 from app.logging import configure_logging
@@ -22,6 +26,46 @@ from app.services.semantic_descriptor_service import SemanticDescriptorService
 from app.services.track_service import TrackService
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_generate_semantic_descriptor(
+    semantic_descriptor_service: SemanticDescriptorService,
+    *,
+    frame_ref: str,
+    face_detection,
+) -> SemanticDescriptorResult:
+    try:
+        return semantic_descriptor_service.generate(
+            frame_ref=frame_ref,
+            face_detection=face_detection,
+        )
+    except Exception as exc:  # pragma: no cover - defensive path
+        logger.exception(
+            "semantic_descriptor_generation_failed frame_ref=%s error=%s",
+            frame_ref,
+            type(exc).__name__,
+        )
+        return SemanticDescriptorResult(
+            backend="simple_color_signature_v1",
+            source_frame_ref=frame_ref,
+            rejection_reasons=["semantic_descriptor_generation_unexpected_failure"],
+            descriptor={
+                "generation_trace": {
+                    "requested_backend": settings.semantic_descriptor_backend,
+                    "fallback_enabled": settings.semantic_enable_fallback,
+                    "selected_backend": None,
+                    "selected_backend_key": None,
+                    "attempts": [
+                        {
+                            "backend_key": "service",
+                            "backend_name": "semantic_descriptor_service",
+                            "status": "failed",
+                            "reason": f"unexpected_service_error:{type(exc).__name__}",
+                        }
+                    ],
+                }
+            },
+        )
 
 
 def process_fixture(fixture_path: str) -> dict:
@@ -74,7 +118,8 @@ def process_fixture(fixture_path: str) -> dict:
                 matched_at=message.captured_at,
             )
             if not match_result.identified:
-                semantic_descriptor_result = semantic_descriptor_service.generate(
+                semantic_descriptor_result = _safe_generate_semantic_descriptor(
+                    semantic_descriptor_service,
                     frame_ref=message.frame_ref,
                     face_detection=face_detection,
                 )
@@ -183,7 +228,8 @@ def process_fixture(fixture_path: str) -> dict:
                     semantic_descriptor_result=semantic_descriptor_result,
                 )
         else:
-            semantic_descriptor_result = semantic_descriptor_service.generate(
+            semantic_descriptor_result = _safe_generate_semantic_descriptor(
+                semantic_descriptor_service,
                 frame_ref=message.frame_ref,
                 face_detection=face_detection,
             )
@@ -349,7 +395,7 @@ def process_fixture(fixture_path: str) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 6")
+    parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 7")
     parser.add_argument("--fixture", required=True, help="Path to frame.ingested example JSON")
     args = parser.parse_args()
 

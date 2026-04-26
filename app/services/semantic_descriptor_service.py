@@ -42,6 +42,7 @@ class SemanticDescriptorService:
         requested_backend = settings.semantic_descriptor_backend
         generation_trace = {
             "requested_backend": requested_backend,
+            "fallback_enabled": settings.semantic_enable_fallback,
             "selected_backend": None,
             "selected_backend_key": None,
             "attempts": [],
@@ -103,6 +104,7 @@ class SemanticDescriptorService:
                         "backend_key": backend_key,
                         "backend_name": backend_output.backend_name,
                         "status": "success",
+                        **backend_output.trace,
                     }
                 )
                 descriptor["generation_trace"] = deepcopy(generation_trace)
@@ -124,6 +126,7 @@ class SemanticDescriptorService:
                         "backend_name": backend.backend_name,
                         "status": "failed",
                         "reason": str(exc),
+                        **exc.details,
                     }
                 )
             except Exception as exc:  # pragma: no cover - defensive path
@@ -183,8 +186,9 @@ class SemanticDescriptorService:
 
     def _build_backend_chain(self, *, requested_backend: str | None) -> list[str]:
         requested_key = self._normalize_backend_key(requested_backend)
+        fallback_key = self._fallback_key_for(requested_key) if settings.semantic_enable_fallback else None
         chain: list[str] = []
-        for backend_key in [requested_key, self._fallback_key_for(requested_key), self.SIMPLE_BACKEND_KEY]:
+        for backend_key in [requested_key, fallback_key, self.SIMPLE_BACKEND_KEY]:
             if backend_key and backend_key not in chain:
                 chain.append(backend_key)
         return chain

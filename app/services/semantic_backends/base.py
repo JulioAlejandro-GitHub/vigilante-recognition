@@ -8,10 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from app.domain.entities import FaceDetectionResult
+from app.services.semantic_backends.model_loader import (
+    ProcessIsolatedTransformersRunner,
+    VlmRuntimeError,
+)
 
 
 class SemanticBackendError(RuntimeError):
-    pass
+    def __init__(self, reason: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.details = details or {}
 
 
 @dataclass
@@ -31,6 +38,7 @@ class SemanticBackendOutput:
     confidence: float | None = None
     raw_summary: str | None = None
     raw_response: Any | None = None
+    trace: dict[str, Any] = field(default_factory=dict)
 
 
 class SemanticDescriptorBackend(ABC):
@@ -51,12 +59,23 @@ class SemanticDescriptorBackend(ABC):
 class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
     supports_real_vlm = True
 
-    def __init__(self, *, key: str, model_name: str) -> None:
+    def __init__(
+        self,
+        *,
+        key: str,
+        model_name: str,
+        device_preference: str = "auto",
+        runner: Any | None = None,
+        max_new_tokens: int = 320,
+    ) -> None:
         self.key = key
         self.backend_name = model_name
-        self._processor = None
-        self._model = None
-        self._device = "cpu"
+        self._runner = runner or ProcessIsolatedTransformersRunner(
+            backend_key=key,
+            model_name=model_name,
+            device_preference=device_preference,
+            max_new_tokens=max_new_tokens,
+        )
 
     def generate_descriptor(
         self,
@@ -65,59 +84,32 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
         context: SemanticBackendContext,
     ) -> SemanticBackendOutput:
         prompt = self._build_prompt(context=context)
-        raw_text = self._run_inference(image_path=image_path, prompt=prompt)
-        parsed = self._extract_json_payload(raw_text)
+        try:
+            runtime_result = self._runner.generate_text(
+                image_path=image_path,
+                prompt=prompt,
+                timeout_seconds=context.timeout_seconds,
+            )
+        except VlmRuntimeError as exc:
+            raise SemanticBackendError(exc.reason, details=exc.details) from exc
+
+        raw_text = runtime_result.raw_text
+        try:
+            parsed = self._extract_json_payload(raw_text)
+        except SemanticBackendError as exc:
+            raise SemanticBackendError(
+                exc.reason,
+                details={**runtime_result.trace_payload(), **exc.details},
+            ) from exc
+
         return SemanticBackendOutput(
             backend_name=self.backend_name,
             descriptor=parsed,
             confidence=self._coerce_confidence(parsed.get("descriptor_confidence")),
             raw_summary=str(parsed.get("raw_summary", "")).strip() or None,
             raw_response=self._truncate_response(raw_text),
+            trace=runtime_result.trace_payload(),
         )
-
-    def _run_inference(self, *, image_path: Path, prompt: str) -> str:
-        try:
-            import torch
-            from PIL import Image
-            from transformers import AutoModelForImageTextToText, AutoProcessor
-        except ImportError as exc:
-            raise SemanticBackendError("optional_vlm_dependencies_missing") from exc
-
-        if self._processor is None or self._model is None:
-            try:
-                self._processor = AutoProcessor.from_pretrained(
-                    self.backend_name,
-                    trust_remote_code=True,
-                )
-                self._model = AutoModelForImageTextToText.from_pretrained(
-                    self.backend_name,
-                    trust_remote_code=True,
-                    low_cpu_mem_usage=True,
-                )
-                if torch.cuda.is_available():
-                    self._model = self._model.to("cuda")
-                    self._device = "cuda"
-            except Exception as exc:
-                raise SemanticBackendError(f"model_load_failed:{type(exc).__name__}") from exc
-
-        try:
-            image = Image.open(image_path).convert("RGB")
-            inputs = self._processor(
-                text=prompt,
-                images=image,
-                return_tensors="pt",
-            )
-            if self._device != "cpu":
-                inputs = {
-                    key: value.to(self._device) if hasattr(value, "to") else value
-                    for key, value in inputs.items()
-                }
-            output_ids = self._model.generate(**inputs, max_new_tokens=320)
-            raw_text = self._processor.batch_decode(output_ids, skip_special_tokens=True)[0]
-        except Exception as exc:
-            raise SemanticBackendError(f"model_inference_failed:{type(exc).__name__}") from exc
-
-        return raw_text
 
     def _build_prompt(self, *, context: SemanticBackendContext) -> str:
         face_state = "unknown"
@@ -130,18 +122,17 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
                 face_state = "face_not_detected"
 
         return (
-            "You are generating a structured surveillance appearance descriptor for a single visible human subject.\n"
-            "Return JSON only. Do not include markdown, explanations, or any text outside JSON.\n"
-            "Describe only directly observable visual cues.\n"
-            "Do not infer identity, ethnicity, nationality, age, religion, disability, socioeconomic status, "
-            "emotion, profession, or criminal intent.\n"
-            "If a value is not clearly visible, use 'unknown' or an empty list.\n"
-            "Schema:\n"
+            "Analyze one visible human subject in the image and return JSON only.\n"
+            "Describe direct visual observables only.\n"
+            "Do not infer identity or sensitive attributes such as ethnicity, nationality, age, religion, disability, socioeconomic status, profession, emotion, or intent.\n"
+            "Use concise neutral labels and keep unknown values as 'unknown' or [].\n"
+            "Keep raw_summary to one short neutral sentence.\n"
+            "Return exactly this JSON shape:\n"
             "{\n"
             '  "subject_type": "person",\n'
             '  "top_clothing": {"category": "unknown", "color": "unknown", "pattern": "unknown"},\n'
             '  "bottom_clothing": {"category": "unknown", "color": "unknown", "pattern": "unknown"},\n'
-            '  "dominant_colors": ["unknown"],\n'
+            '  "dominant_colors": [],\n'
             '  "accessories": [],\n'
             '  "carried_object": "unknown",\n'
             '  "body_build": "unknown",\n'
@@ -150,8 +141,7 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             '  "descriptor_confidence": 0.0,\n'
             '  "raw_summary": "short neutral visual summary"\n'
             "}\n"
-            f"Context: face_state={face_state}. Prefer neutral terms like upper_garment, pants, backpack, cap, front, left, right.\n"
-            "Keep raw_summary to one short sentence."
+            f"Context: face_state={face_state}. Prefer generic clothing labels such as upper_garment, jacket, hoodie, shirt, pants, jeans, skirt, backpack, cap, front, left, right."
         )
 
     def _extract_json_payload(self, raw_text: str) -> dict[str, Any]:
