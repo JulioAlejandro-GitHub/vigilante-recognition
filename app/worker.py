@@ -22,6 +22,10 @@ from app.runner.process_ingestion_outbox import (
     ProcessIngestionOutboxResult,
     process_ingestion_outbox,
 )
+from app.runner.process_rabbitmq_frames import (
+    ProcessRabbitMqFramesResult,
+    process_rabbitmq_frames,
+)
 from app.services.conflict_resolution_service import ConflictResolutionService
 from app.services.cross_camera_correlation_service import CrossCameraCorrelationService
 from app.services.face_embedding_service import FaceEmbeddingService
@@ -425,12 +429,36 @@ def process_ingestion_jsonl(
     )
 
 
+def process_rabbitmq_consumer(
+    *,
+    max_messages: int | None = None,
+    retry_limit: int | None = None,
+    deduper_path: str | None = None,
+    rejected_events_path: str | None = None,
+) -> ProcessRabbitMqFramesResult:
+    from app.ingestion import FileEventDeduper, RejectedEventStore
+
+    return process_rabbitmq_frames(
+        processor=process_message,
+        frame_search_roots=settings.ingestion_frame_search_root_paths,
+        event_deduper=FileEventDeduper(deduper_path or settings.ingestion_deduper_path),
+        rejected_event_store=RejectedEventStore(rejected_events_path or settings.ingestion_rejected_events_path),
+        max_messages=max_messages,
+        retry_limit=retry_limit,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 7")
     parser.add_argument("--fixture", help="Path to frame.ingested example JSON")
     parser.add_argument(
         "--ingestion-jsonl",
         help="Path to vigilante-ingestion JSONL outbox with frame.ingested events",
+    )
+    parser.add_argument(
+        "--rabbitmq-consumer",
+        action="store_true",
+        help="Consume frame.ingested from RabbitMQ using the configured broker topology.",
     )
     parser.add_argument(
         "--force-replay",
@@ -449,9 +477,20 @@ def main() -> None:
         "--ingestion-rejected-path",
         help="Local rejected events JSONL path. Defaults to INGESTION_REJECTED_EVENTS_PATH.",
     )
+    parser.add_argument(
+        "--rabbitmq-max-messages",
+        type=int,
+        help="Stop RabbitMQ consumption after N deliveries. Omit to run until interrupted.",
+    )
+    parser.add_argument(
+        "--rabbitmq-retry-limit",
+        type=int,
+        help="Retry processing failures this many times before broker DLQ.",
+    )
     args = parser.parse_args()
-    if bool(args.fixture) == bool(args.ingestion_jsonl):
-        parser.error("Provide exactly one of --fixture or --ingestion-jsonl")
+    selected_modes = sum(bool(value) for value in [args.fixture, args.ingestion_jsonl, args.rabbitmq_consumer])
+    if selected_modes != 1:
+        parser.error("Provide exactly one of --fixture, --ingestion-jsonl or --rabbitmq-consumer")
 
     configure_logging(settings.log_level)
     init_db()
@@ -461,16 +500,46 @@ def main() -> None:
             logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
             return
 
-        result = process_ingestion_jsonl(
-            args.ingestion_jsonl,
-            force_replay=args.force_replay,
-            checkpoint_path=args.ingestion_checkpoint_path,
-            deduper_path=args.ingestion_deduper_path,
-            rejected_events_path=args.ingestion_rejected_path,
-        )
+        if args.ingestion_jsonl:
+            result = process_ingestion_jsonl(
+                args.ingestion_jsonl,
+                force_replay=args.force_replay,
+                checkpoint_path=args.ingestion_checkpoint_path,
+                deduper_path=args.ingestion_deduper_path,
+                rejected_events_path=args.ingestion_rejected_path,
+            )
+        else:
+            result = process_rabbitmq_consumer(
+                max_messages=args.rabbitmq_max_messages,
+                retry_limit=args.rabbitmq_retry_limit,
+                deduper_path=args.ingestion_deduper_path,
+                rejected_events_path=args.ingestion_rejected_path,
+            )
     except (InvalidCameraIdError, InvalidFrameIngestedEventError, InvalidJsonlLineError, FrameResolutionError) as exc:
         logger.error("worker_failed reason=%s", exc)
         raise SystemExit(2) from exc
+
+    if isinstance(result, ProcessRabbitMqFramesResult):
+        logger.info(
+            (
+                "worker_finished rabbitmq_queue=%s consumed=%s processed=%s acked=%s "
+                "retried=%s rejected_to_dlq=%s skipped_duplicate=%s invalid_messages=%s "
+                "frame_resolution_errors=%s processing_errors=%s deduper_path=%s rejected_events_path=%s"
+            ),
+            result.queue_name,
+            result.consumed,
+            result.processed,
+            result.acked,
+            result.retried,
+            result.rejected_to_dlq,
+            result.skipped_duplicate,
+            result.invalid_messages,
+            result.frame_resolution_errors,
+            result.processing_errors,
+            result.deduper_path,
+            result.rejected_events_path,
+        )
+        return
 
     logger.info(
         (

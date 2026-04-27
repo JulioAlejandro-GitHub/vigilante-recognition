@@ -7,12 +7,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
-from pydantic import ValidationError
-
 from app.config import settings
-from app.domain.entities import FrameIngestedMessage, InvalidCameraIdError
+from app.domain.entities import FrameIngestedMessage
 from app.ingestion.checkpoint_store import FileCheckpointStore
 from app.ingestion.event_deduper import FileEventDeduper
+from app.ingestion.frame_ingested_validator import (
+    RejectedFrameIngestedEvent as _RejectedFrameIngestedEvent,
+    string_or_none as _string_or_none,
+    validate_frame_ingested_event,
+)
 from app.ingestion.rejected_event_store import RejectedEventStore
 from app.storage.frame_resolver import LocalFrameResolver
 from app.services.track_continuity_service import TrackContinuityService
@@ -242,22 +245,6 @@ def process_ingestion_outbox(
     )
 
 
-class _RejectedFrameIngestedEvent(ValueError):
-    def __init__(
-        self,
-        *,
-        reason: str,
-        event_id: str | None = None,
-        event_type: str | None = None,
-        details: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(reason)
-        self.reason = reason
-        self.event_id = event_id
-        self.event_type = event_type
-        self.details = details or {}
-
-
 def _iter_jsonl_lines(path: Path, *, start_offset: int) -> Iterator[_JsonlLine]:
     line_number = _count_lines_before_offset(path, start_offset) + 1
     with path.open("rb") as event_file:
@@ -300,54 +287,7 @@ def _validate_frame_ingested_message(
     source_path: Path,
     line_number: int,
 ) -> FrameIngestedMessage:
-    event_id = _string_or_none(payload.get("event_id"))
-    event_type = _string_or_none(payload.get("event_type"))
-    if not event_type:
-        raise _RejectedFrameIngestedEvent(
-            reason="missing_event_type",
-            event_id=event_id,
-        )
-    if event_type != "frame.ingested":
-        raise _RejectedFrameIngestedEvent(
-            reason="unsupported_event_type",
-            event_id=event_id,
-            event_type=event_type,
-            details={"supported_event_types": ["frame.ingested"]},
-        )
-
-    event_payload = payload.get("payload")
-    if not isinstance(event_payload, dict):
-        raise _RejectedFrameIngestedEvent(
-            reason="missing_payload",
-            event_id=event_id,
-            event_type=event_type,
-        )
-    if not event_payload.get("frame_ref") and not event_payload.get("frame_uri"):
-        raise _RejectedFrameIngestedEvent(
-            reason="missing_frame_reference",
-            event_id=event_id,
-            event_type=event_type,
-        )
-
-    try:
-        message = FrameIngestedMessage.model_validate(payload)
-        message.camera_uuid
-    except InvalidCameraIdError as exc:
-        raise _RejectedFrameIngestedEvent(
-            reason="invalid_camera_id",
-            event_id=event_id,
-            event_type=event_type,
-            details={"error": str(exc)},
-        ) from exc
-    except ValidationError as exc:
-        raise _RejectedFrameIngestedEvent(
-            reason="malformed_frame_ingested_event",
-            event_id=event_id,
-            event_type=event_type,
-            details={"error": str(exc), "source_path": str(source_path), "line_number": line_number},
-        ) from exc
-
-    return message
+    return validate_frame_ingested_event(payload, source_path=source_path, line_number=line_number)
 
 
 def _reject(
@@ -379,7 +319,3 @@ def _reject(
         details=details,
         raw_line=raw_line,
     )
-
-
-def _string_or_none(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None

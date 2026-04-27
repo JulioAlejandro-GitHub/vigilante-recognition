@@ -18,7 +18,15 @@ class Settings(BaseSettings):
     rabbitmq_password: str = "guest"
     rabbitmq_vhost: str = "/"
 
-    frame_queue_name: str = "vigilante.frames"
+    rabbitmq_frame_exchange: str = "vigilante.frames"
+    rabbitmq_frame_routing_key: str = "frame.ingested"
+    rabbitmq_frame_queue_name: str = "vigilante.recognition.frame_ingested"
+    rabbitmq_frame_dlx: str = "vigilante.frames.dlx"
+    rabbitmq_frame_dlq: str = "vigilante.recognition.frame_ingested.dlq"
+    rabbitmq_frame_dlq_routing_key: str = "frame.ingested.dlq"
+    rabbitmq_prefetch_count: int = 10
+    rabbitmq_retry_limit: int = 3
+    rabbitmq_idle_timeout_seconds: float = 1.0
     recognition_event_exchange: str = "vigilante.recognition.events"
 
     observation_window_seconds: int = 15

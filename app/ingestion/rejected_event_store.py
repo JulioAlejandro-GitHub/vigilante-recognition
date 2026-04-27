@@ -28,7 +28,7 @@ class RejectedEventStore:
         record = {
             "rejected_at": datetime.now(timezone.utc).isoformat(),
             "reason": reason,
-            "source_path": str(Path(source_path).expanduser().resolve(strict=False)),
+            "source_path": self._source_path(source_path),
             "line_number": line_number,
             "offset": offset,
             "event_id": event_id,
@@ -41,3 +41,9 @@ class RejectedEventStore:
         with self.path.open("a", encoding="utf-8") as rejected_file:
             rejected_file.write(json.dumps(record, sort_keys=True, separators=(",", ":")))
             rejected_file.write("\n")
+
+    def _source_path(self, source_path: Path | str) -> str:
+        value = str(source_path)
+        if value.startswith("rabbitmq:"):
+            return value
+        return str(Path(value).expanduser().resolve(strict=False))

@@ -19,7 +19,7 @@ class FileEventDeduper:
         state = self._state()
         processed = state.setdefault("processed_event_ids", {})
         processed[event_id] = {
-            "source_path": str(Path(source_path).expanduser().resolve(strict=False)),
+            "source_path": self._source_path(source_path),
             "line_number": line_number,
             "processed_at": self._now(),
         }
@@ -51,3 +51,9 @@ class FileEventDeduper:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _source_path(self, source_path: Path | str) -> str:
+        value = str(source_path)
+        if value.startswith("rabbitmq:"):
+            return value
+        return str(Path(value).expanduser().resolve(strict=False))

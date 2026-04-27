@@ -220,6 +220,77 @@ originales en `payload.metadata.original_frame_ref` /
 Este slice no resuelve `s3://` ni MinIO dentro de recognition; esos URI quedan
 preparados para una integración posterior con MinIO o `vigilante-media`.
 
+## Integración RabbitMQ con vigilante-ingestion
+
+Slice 3 agrega consumo real AMQP sin quitar los modos previos. El worker soporta:
+
+- `--fixture`
+- `--ingestion-jsonl`
+- `--rabbitmq-consumer`
+
+Topología RabbitMQ:
+
+- exchange principal: `vigilante.frames`
+- routing key: `frame.ingested`
+- cola consumida por recognition: `vigilante.recognition.frame_ingested`
+- DLX: `vigilante.frames.dlx`
+- DLQ: `vigilante.recognition.frame_ingested.dlq`
+- routing key DLQ: `frame.ingested.dlq`
+
+Flujo local reproducible:
+
+```bash
+docker compose -f ../vigilante-docs/docker/docker-compose.support.yml up -d rabbitmq
+
+cd ../vigilante-ingestion
+source .venv/bin/activate
+PYTHONPATH=. python -m app.main \
+  --source-file samples/cam01.mp4 \
+  --camera-id 11111111-1111-1111-1111-111111111111 \
+  --fps 1 \
+  --max-frames 10 \
+  --publish-mode rabbitmq
+
+cd ../vigilante-recognition
+source .venv/bin/activate
+PYTHONPATH=. pytest
+PYTHONPATH=. python -m app.worker \
+  --rabbitmq-consumer \
+  --rabbitmq-max-messages 10
+```
+
+`--rabbitmq-max-messages` es útil para smoke tests porque el proceso termina
+después de consumir N deliveries. Sin ese flag el consumer queda corriendo hasta
+interrupción manual.
+
+### Ack, retry y DLQ
+
+El consumer hace `ack` solo después de validar contrato, resolver el frame,
+ejecutar el pipeline y marcar el `event_id` como procesado en el deduper local.
+
+Van directo a DLQ del broker con `basic_reject(requeue=false)`:
+
+- JSON inválido o no UTF-8
+- evento no objeto
+- `event_type` ausente o distinto de `frame.ingested`
+- payload incompleto
+- `payload.camera_id` no UUID
+- falta de `frame_ref`/`frame_uri`
+- frame físico no resoluble
+
+Errores del pipeline se tratan como transitorios: el consumer republica el mismo
+body a `vigilante.frames` con header `x-retry-count` incrementado y hace `ack`
+del delivery original. Al superar `RABBITMQ_RETRY_LIMIT`, rechaza el mensaje
+actual sin requeue y RabbitMQ lo enruta a la DLQ. Además se conserva el rejected
+events local para trazabilidad del motivo exacto.
+
+La idempotencia por `event_id` sigue usando
+`.runtime/ingestion/processed_events.json`. Si RabbitMQ redelivera un evento ya
+procesado, recognition lo salta y hace `ack`, sin volver a persistir resultados.
+
+La continuidad básica entre frames usa el mismo `TrackContinuityService` del
+modo JSONL antes de invocar el pipeline.
+
 ### Backend VLM opcional
 
 El worker puede usar un backend VLM real, pero no es obligatorio para tests ni smoke tests.
@@ -297,6 +368,15 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `INGESTION_DEDUPER_PATH=.runtime/ingestion/processed_events.json`
 - `INGESTION_REJECTED_EVENTS_PATH=.runtime/ingestion/rejected_events.jsonl`
 - `INGESTION_TRACK_CONTINUITY_WINDOW_SECONDS=15`
+- `RABBITMQ_FRAME_EXCHANGE=vigilante.frames`
+- `RABBITMQ_FRAME_ROUTING_KEY=frame.ingested`
+- `RABBITMQ_FRAME_QUEUE_NAME=vigilante.recognition.frame_ingested`
+- `RABBITMQ_FRAME_DLX=vigilante.frames.dlx`
+- `RABBITMQ_FRAME_DLQ=vigilante.recognition.frame_ingested.dlq`
+- `RABBITMQ_FRAME_DLQ_ROUTING_KEY=frame.ingested.dlq`
+- `RABBITMQ_PREFETCH_COUNT=10`
+- `RABBITMQ_RETRY_LIMIT=3`
+- `RABBITMQ_IDLE_TIMEOUT_SECONDS=1`
 
 ## Pendiente después del Slice 7
 
@@ -304,10 +384,8 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `candidate_match`
 - correlación cross-camera avanzada
 - optimización de rendimiento VLM real para operación sostenida de producción
-- consumo RabbitMQ real de `vigilante.frames`
 - resolución MinIO / `vigilante-media`
-- reemplazar el DLQ local JSONL por DLQ/outbox conectado a la cola real
-- adaptar checkpoint/dedupe local a acknowledgement/idempotencia del broker
+- consumer RabbitMQ distribuido con más de una instancia y métricas formales
 - integración real con alerting
 - revisión humana
 
