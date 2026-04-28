@@ -1,0 +1,5 @@
+-r requirements.txt
+accelerate>=0.30,<2
+Pillow>=10,<12
+torch>=2.4,<3
+transformers>=4.57,<5

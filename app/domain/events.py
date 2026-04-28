@@ -14,10 +14,24 @@ def build_recognition_event(
     confidence: float,
     decision_reason: list[str],
     frame_ref: str,
+    payload_details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
+    camera_id_value = str(camera_id)
+    track_id_value = str(track_id)
+    subject_id_value = str(subject_id)
+    payload = {
+        "severity": severity,
+        "confidence": confidence,
+        "decision_reason": decision_reason,
+        "evidence_refs": [frame_ref],
+        "requires_human_review": False,
+    }
+    if payload_details:
+        payload.update(payload_details)
+
     return {
-        "event_id": f"evt_{track_id}_{event_type}",
+        "event_id": f"evt_{track_id_value}_{event_type}",
         "event_type": event_type,
         "event_version": "1.0",
         "occurred_at": now,
@@ -27,17 +41,11 @@ def build_recognition_event(
             "instance": "local-worker",
             "version": "0.1.0",
         },
-        "payload": {
-            "severity": severity,
-            "confidence": confidence,
-            "decision_reason": decision_reason,
-            "evidence_refs": [frame_ref],
-            "requires_human_review": False,
-        },
+        "payload": payload,
         "context": {
-            "camera_id": camera_id,
-            "track_id": track_id,
-            "subject_id": subject_id,
-            "idempotency_key": f"{track_id}:{event_type}",
+            "camera_id": camera_id_value,
+            "track_id": track_id_value,
+            "subject_id": subject_id_value,
+            "idempotency_key": f"{track_id_value}:{event_type}",
         },
     }

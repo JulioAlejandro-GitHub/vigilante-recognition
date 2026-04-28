@@ -1,0 +1,22 @@
+{
+  "event_id": "evt_ing_005",
+  "event_type": "frame.ingested",
+  "event_version": "1.0",
+  "occurred_at": "2026-03-17T15:34:45.123Z",
+  "payload": {
+    "frame_ref": "tests/fixtures/images/face_identified.jpg",
+    "camera_id": "22222222-1111-1111-1111-111111111111",
+    "external_camera_key": "cam_202",
+    "captured_at": "2026-03-17T15:34:45.123Z",
+    "quality_metadata": {
+      "overall_blur": 0.19,
+      "exposure_score": 0.9
+    }
+  },
+  "context": {
+    "correlation_id": "corr_cross_camera_positive",
+    "idempotency_key": "frame_camera_uuid_20260317T153445123",
+    "organization_id": "org_demo",
+    "site_id": "site_norte"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "event_id": "evt_ing_009_slice5",
+  "event_type": "frame.ingested",
+  "event_version": "1.0",
+  "occurred_at": "2026-05-10T13:07:45.123Z",
+  "payload": {
+    "frame_ref": "tests/fixtures/images/face_low_quality.jpg",
+    "camera_id": "66666666-1111-1111-1111-111111111111",
+    "external_camera_key": "cam_106",
+    "captured_at": "2026-05-10T13:07:45.123Z",
+    "quality_metadata": {
+      "overall_blur": 0.86,
+      "exposure_score": 0.74
+    }
+  },
+  "context": {
+    "correlation_id": "corr_case_suggestion_slice5",
+    "idempotency_key": "frame_camera_uuid_20260510T130745123",
+    "organization_id": "org_demo",
+    "site_id": "site_centro"
+  }
+}
