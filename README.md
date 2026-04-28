@@ -204,21 +204,75 @@ cada frame. No es tracking multicámara ni reemplaza la correlación avanzada.
 
 ### Resolución de frames
 
-La estrategia de resolución local es:
+La estrategia de resolución es:
 
 1. si `payload.frame_uri` existe y apunta a un archivo local, se usa ese path;
-2. si no, se intenta `payload.frame_ref`;
-3. si el valor es relativo, se resuelve contra el directorio actual y luego contra
+2. si `payload.frame_uri` o `payload.frame_ref` usa `s3://bucket/key` o
+   `minio://bucket/key`, se descarga desde el endpoint S3/MinIO configurado;
+3. si no, se intenta `payload.frame_ref`;
+4. si el valor es relativo, se resuelve contra el directorio actual y luego contra
    `INGESTION_FRAME_SEARCH_ROOTS`, si está configurado.
 
 `payload.frame_ref` sigue siendo el campo canónico del contrato. Cuando el loader
-necesita usar `frame_uri` para abrir el archivo local, pasa al pipeline una copia
-del mensaje con `payload.frame_ref` resuelto al path físico y conserva los valores
-originales en `payload.metadata.original_frame_ref` /
-`payload.metadata.original_frame_uri`.
+necesita usar `frame_uri` o descargar un remoto para abrir el archivo, pasa al
+pipeline una copia del mensaje con `payload.frame_ref` resuelto al path físico y
+conserva los valores originales en `payload.metadata.original_frame_ref` /
+`payload.metadata.original_frame_uri`. `payload.frame_uri` se conserva como URI
+remoto o alias práctico.
 
-Este slice no resuelve `s3://` ni MinIO dentro de recognition; esos URI quedan
-preparados para una integración posterior con MinIO o `vigilante-media`.
+Para MinIO local:
+
+```bash
+STORAGE_S3_ENDPOINT=localhost:9000
+STORAGE_S3_ACCESS_KEY=minio
+STORAGE_S3_SECRET_KEY=minio123
+STORAGE_S3_SECURE=false
+STORAGE_S3_CACHE_DIR=.runtime/ingestion/frame-cache
+```
+
+`s3://vigilante-frames/frames/cam01/frame.jpg` se interpreta como
+bucket `vigilante-frames` y object key `frames/cam01/frame.jpg`. Recognition
+descarga el objeto a un cache local determinístico bajo `STORAGE_S3_CACHE_DIR` y
+usa ese archivo temporal/cacheado en el pipeline actual de OpenCV/embeddings.
+Los errores de bucket inexistente, objeto inexistente, credenciales inválidas,
+endpoint inválido, timeout o URI mal formada se registran como
+`frame_resolution_failed` en rejected events o se envían a la DLQ del broker según
+el modo de consumo.
+
+Este diseño mantiene el puente para `vigilante-media`: a futuro el resolver puede
+reemplazar el acceso directo S3 por un media service sin cambiar el contrato
+`frame_ref` / `frame_uri`.
+
+### Flujo local con MinIO/S3 compartido
+
+```bash
+docker compose -f ../vigilante-docs/docker/docker-compose.support.yml up -d minio rabbitmq
+
+cd ../vigilante-ingestion
+source .venv/bin/activate
+PYTHONPATH=. python -m app.main \
+  --source-file samples/cam01.mp4 \
+  --camera-id 11111111-1111-1111-1111-111111111111 \
+  --fps 1 \
+  --max-frames 10 \
+  --storage-backend minio \
+  --minio-endpoint localhost:9000 \
+  --minio-access-key minio \
+  --minio-secret-key minio123 \
+  --minio-bucket vigilante-frames \
+  --publish-mode both
+
+cd ../vigilante-recognition
+source .venv/bin/activate
+PYTHONPATH=. python -m app.worker \
+  --ingestion-jsonl ../vigilante-ingestion/outbox/frame_ingested.jsonl
+```
+
+Para RabbitMQ directo, cambia el último comando por:
+
+```bash
+PYTHONPATH=. python -m app.worker --rabbitmq-consumer --rabbitmq-max-messages 10
+```
 
 ## Integración RabbitMQ con vigilante-ingestion
 

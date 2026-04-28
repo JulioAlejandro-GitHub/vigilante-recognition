@@ -15,7 +15,8 @@ from app.ingestion.rabbitmq_event_source import RabbitMqDelivery, RabbitMqEventS
 from app.ingestion.rejected_event_store import RejectedEventStore
 from app.messaging.topology import FrameIngestedTopology
 from app.services.track_continuity_service import TrackContinuityService
-from app.storage.frame_resolver import FrameResolutionError, LocalFrameResolver
+from app.storage.factory import build_frame_resolver
+from app.storage.frame_resolver import FrameResolutionError, FrameResolver
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ def process_rabbitmq_frames(
     frame_search_roots: list[Path] | None = None,
     event_deduper: FileEventDeduper | None = None,
     rejected_event_store: RejectedEventStore | None = None,
+    frame_resolver: FrameResolver | None = None,
     track_continuity_service: TrackContinuityService | None = None,
     topology: FrameIngestedTopology | None = None,
     max_messages: int | None = None,
@@ -54,7 +56,7 @@ def process_rabbitmq_frames(
     owns_source = event_source is None
     event_deduper = event_deduper or FileEventDeduper(settings.ingestion_deduper_path)
     rejected_event_store = rejected_event_store or RejectedEventStore(settings.ingestion_rejected_events_path)
-    frame_resolver = LocalFrameResolver(search_roots=frame_search_roots)
+    frame_resolver = frame_resolver or build_frame_resolver(frame_search_roots=frame_search_roots)
     track_continuity_service = track_continuity_service or TrackContinuityService(
         window_seconds=settings.ingestion_track_continuity_window_seconds,
     )
@@ -167,8 +169,11 @@ def process_rabbitmq_frames(
                     delivery=delivery,
                     details={
                         "error": str(exc),
+                        "reason": exc.reason,
                         "frame_refs": exc.frame_refs,
                         "attempted_paths": [str(path) for path in exc.attempted_paths],
+                        "attempted_locations": exc.attempted_locations,
+                        "resolver_details": exc.details,
                     },
                     raw_body=raw_body,
                     topology=topology,

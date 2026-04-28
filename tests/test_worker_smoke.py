@@ -17,8 +17,12 @@ from app.domain.entities import (
     RecurrentSubjectResolution,
     SupplementalRecognitionDecision,
 )
+from app.ingestion import FileCheckpointStore, FileEventDeduper, RejectedEventStore
 from app.models import CrossCameraCorrelation, EventOutbox, HumanTrack, RecognitionEvent
-from app.worker import process_fixture, process_ingestion_jsonl
+from app.runner.process_ingestion_outbox import process_ingestion_outbox
+from app.storage.frame_resolver import FrameResolver
+from app.storage.s3_frame_resolver import S3FrameResolver
+from app.worker import process_fixture, process_ingestion_jsonl, process_message
 
 CAMERA_ID = "11111111-1111-1111-1111-111111111111"
 CAMERA_B_ID = "22222222-1111-1111-1111-111111111111"
@@ -1041,3 +1045,104 @@ def test_process_ingestion_jsonl_runs_worker_pipeline_with_resolved_frame(mock_g
     assert recognition_event_call["evidence_refs"] == [str(frame_path)]
     assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
     mock_session.commit.assert_called_once()
+
+
+@patch("app.worker.RecognitionRepository")
+@patch("app.worker.get_session")
+def test_remote_s3_ingestion_event_runs_worker_pipeline_with_resolved_frame(mock_get_session, mock_repo_class, tmp_path):
+    mock_session = MagicMock()
+    mock_get_session.return_value.__enter__.return_value = mock_session
+
+    mock_repo_instance = MagicMock()
+    resolved_camera_id = UUID(CAMERA_ID)
+    subject_id = uuid4()
+    track_id = uuid4()
+    recognition_event_id = uuid4()
+
+    subject = MagicMock()
+    subject.observed_subject_id = subject_id
+
+    track = MagicMock()
+    track.human_track_id = track_id
+    track.camera_id = resolved_camera_id
+    track.person_presence_score = 0.0
+
+    _configure_repo_for_slice3_flow(
+        mock_repo_instance,
+        subject=subject,
+        track=track,
+        recognition_event=_make_recognition_event(recognition_event_id),
+    )
+    mock_repo_class.return_value = mock_repo_instance
+
+    source_frame = Path("tests/fixtures/images/face_low_quality.jpg")
+    object_key = "frames/cam01/face_low_quality.jpg"
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(
+        json.dumps(
+            {
+                "event_id": "evt_ingestion_s3_frame",
+                "event_type": "frame.ingested",
+                "event_version": "1.0",
+                "occurred_at": "2026-01-01T00:00:00.000Z",
+                "payload": {
+                    "camera_id": CAMERA_ID,
+                    "captured_at": "2026-01-01T00:00:00.000Z",
+                    "content_type": "image/jpeg",
+                    "frame_ref": f"s3://vigilante-frames/{object_key}",
+                    "frame_uri": f"s3://vigilante-frames/{object_key}",
+                    "height": 120,
+                    "metadata": {
+                        "frame_object_key": object_key,
+                        "source_uri": "samples/cam01.mp4",
+                        "storage_backend": "minio",
+                    },
+                    "quality_metadata": {"capture_fps": 1.0},
+                    "source_type": "video_file",
+                    "width": 120,
+                },
+                "context": {
+                    "correlation_id": "corr_ingestion_s3_frame",
+                    "idempotency_key": "frame:test",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    resolver = FrameResolver(
+        remote_resolver=S3FrameResolver(
+            endpoint="localhost:9000",
+            access_key="minio",
+            secret_key="minio123",
+            cache_dir=tmp_path / "cache",
+            client=_FakeS3Client({("vigilante-frames", object_key): source_frame.read_bytes()}),
+        )
+    )
+
+    result = process_ingestion_outbox(
+        jsonl_path,
+        processor=process_message,
+        checkpoint_store=FileCheckpointStore(tmp_path / "state" / "checkpoint.json"),
+        event_deduper=FileEventDeduper(tmp_path / "state" / "processed_events.json"),
+        rejected_event_store=RejectedEventStore(tmp_path / "state" / "rejected_events.jsonl"),
+        frame_resolver=resolver,
+    )
+
+    cached_frame = (tmp_path / "cache" / "vigilante-frames" / "frames" / "cam01" / "face_low_quality.jpg").resolve()
+    assert result.processed == 1
+    assert result.rejected == 0
+    assert result.emitted_events[0]["context"]["camera_id"] == CAMERA_ID
+    recognition_event_call = mock_repo_instance.add_recognition_event.call_args.kwargs
+    assert recognition_event_call["camera_id"] == resolved_camera_id
+    assert recognition_event_call["evidence_refs"] == [str(cached_frame)]
+    assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
+    mock_session.commit.assert_called_once()
+
+
+class _FakeS3Client:
+    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
+        self.objects = objects
+
+    def fget_object(self, bucket: str, object_key: str, file_path: str) -> None:
+        Path(file_path).write_bytes(self.objects[(bucket, object_key)])

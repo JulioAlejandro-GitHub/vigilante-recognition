@@ -8,6 +8,8 @@ from app.ingestion import FileEventDeduper, RejectedEventStore
 from app.ingestion.rabbitmq_event_source import RabbitMqDelivery
 from app.messaging.topology import FrameIngestedTopology
 from app.runner.process_rabbitmq_frames import process_rabbitmq_frames
+from app.storage.frame_resolver import FrameResolver
+from app.storage.s3_frame_resolver import S3FrameResolver
 
 
 CAMERA_ID = "11111111-1111-1111-1111-111111111111"
@@ -102,6 +104,41 @@ def test_process_rabbitmq_frames_rejects_unresolvable_frame_to_broker_dlq(tmp_pa
     assert result.rejected_to_dlq == 1
     assert source.rejected == [1]
     assert _read_jsonl(rejected_store.path)[0]["reason"] == "frame_resolution_failed"
+
+
+def test_process_rabbitmq_frames_processes_remote_s3_frame(tmp_path) -> None:
+    event = _event(frame_ref="s3://vigilante-frames/frames/cam01/frame.jpg")
+    source = _FakeRabbitMqEventSource([_delivery(event)])
+    resolver = FrameResolver(
+        remote_resolver=S3FrameResolver(
+            endpoint="localhost:9000",
+            access_key="minio",
+            secret_key="minio123",
+            cache_dir=tmp_path / "cache",
+            client=_FakeS3Client({("vigilante-frames", "frames/cam01/frame.jpg"): b"\xff\xd8test\xff\xd9"}),
+        )
+    )
+    processed: list[str] = []
+
+    def processor(message):
+        processed.append(message.frame_ref)
+        assert Path(message.frame_ref).is_file()
+        return {"event_type": "processed", "payload": {"frame_ref": message.frame_ref}}
+
+    result = process_rabbitmq_frames(
+        processor=processor,
+        event_source=source,
+        event_deduper=FileEventDeduper(tmp_path / "state" / "processed_events.json"),
+        rejected_event_store=RejectedEventStore(tmp_path / "state" / "rejected_events.jsonl"),
+        frame_resolver=resolver,
+        topology=FrameIngestedTopology(),
+        max_messages=1,
+    )
+
+    assert result.processed == 1
+    assert result.rejected_to_dlq == 0
+    assert source.acked == [1]
+    assert processed == [str((tmp_path / "cache" / "vigilante-frames" / "frames" / "cam01" / "frame.jpg").resolve())]
 
 
 def test_process_rabbitmq_frames_retries_processing_failure_then_acks_original(tmp_path) -> None:
@@ -245,3 +282,11 @@ class _FakeRabbitMqEventSource:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _FakeS3Client:
+    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
+        self.objects = objects
+
+    def fget_object(self, bucket: str, object_key: str, file_path: str) -> None:
+        Path(file_path).write_bytes(self.objects[(bucket, object_key)])

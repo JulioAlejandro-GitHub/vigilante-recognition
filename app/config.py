@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     ingestion_deduper_path: str = ".runtime/ingestion/processed_events.json"
     ingestion_rejected_events_path: str = ".runtime/ingestion/rejected_events.jsonl"
     ingestion_track_continuity_window_seconds: int = 15
+    storage_s3_endpoint: str = "localhost:9000"
+    storage_s3_access_key: str = "minio"
+    storage_s3_secret_key: str = "minio123"
+    storage_s3_secure: bool = False
+    storage_s3_region: str | None = None
+    storage_s3_cache_dir: str = ".runtime/ingestion/frame-cache"
+    storage_s3_connect_timeout_seconds: float = 3.0
+    storage_s3_read_timeout_seconds: float = 15.0
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

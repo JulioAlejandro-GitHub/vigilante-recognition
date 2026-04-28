@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from app.domain.entities import FrameIngestedMessage, InvalidCameraIdError
 from app.ingestion.jsonl_event_source import JsonlEventSource
-from app.storage.frame_resolver import LocalFrameResolver
+from app.storage.frame_resolver import FrameResolver, LocalFrameResolver
 
 
 class InvalidFrameIngestedEventError(ValueError):
@@ -31,7 +31,7 @@ class FrameIngestedJsonlLoader:
         self,
         path: Path | str,
         *,
-        frame_resolver: LocalFrameResolver | None = None,
+        frame_resolver: FrameResolver | LocalFrameResolver | None = None,
     ) -> None:
         self.path = Path(path)
         self.event_source = JsonlEventSource(self.path)
@@ -57,4 +57,3 @@ class FrameIngestedJsonlLoader:
                 message=resolved_message,
                 resolved_frame_path=Path(resolved_message.frame_ref),
             )
-

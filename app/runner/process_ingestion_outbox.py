@@ -17,9 +17,9 @@ from app.ingestion.frame_ingested_validator import (
     validate_frame_ingested_event,
 )
 from app.ingestion.rejected_event_store import RejectedEventStore
-from app.storage.frame_resolver import LocalFrameResolver
 from app.services.track_continuity_service import TrackContinuityService
-from app.storage.frame_resolver import FrameResolutionError
+from app.storage.factory import build_frame_resolver
+from app.storage.frame_resolver import FrameResolutionError, FrameResolver
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,7 @@ def process_ingestion_outbox(
     checkpoint_store: FileCheckpointStore | None = None,
     event_deduper: FileEventDeduper | None = None,
     rejected_event_store: RejectedEventStore | None = None,
+    frame_resolver: FrameResolver | None = None,
     force_replay: bool = False,
     track_continuity_service: TrackContinuityService | None = None,
 ) -> ProcessIngestionOutboxResult:
@@ -66,7 +67,7 @@ def process_ingestion_outbox(
     checkpoint_store = checkpoint_store or FileCheckpointStore(settings.ingestion_checkpoint_path)
     event_deduper = event_deduper or FileEventDeduper(settings.ingestion_deduper_path)
     rejected_event_store = rejected_event_store or RejectedEventStore(settings.ingestion_rejected_events_path)
-    frame_resolver = LocalFrameResolver(search_roots=frame_search_roots)
+    frame_resolver = frame_resolver or build_frame_resolver(frame_search_roots=frame_search_roots)
     track_continuity_service = track_continuity_service or TrackContinuityService(
         window_seconds=settings.ingestion_track_continuity_window_seconds,
     )
@@ -195,8 +196,11 @@ def process_ingestion_outbox(
                 event_type=event_type,
                 details={
                     "error": str(exc),
+                    "reason": exc.reason,
                     "frame_refs": exc.frame_refs,
                     "attempted_paths": [str(path) for path in exc.attempted_paths],
+                    "attempted_locations": exc.attempted_locations,
+                    "resolver_details": exc.details,
                 },
                 raw_line=raw_line_for_rejection,
             )

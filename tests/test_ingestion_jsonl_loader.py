@@ -10,7 +10,8 @@ from app.ingestion.frame_ingested_loader import (
     InvalidFrameIngestedEventError,
 )
 from app.ingestion.jsonl_event_source import InvalidJsonlLineError
-from app.storage.frame_resolver import FrameResolutionError, LocalFrameResolver
+from app.storage.frame_resolver import FrameResolutionError, FrameResolver, LocalFrameResolver
+from app.storage.s3_frame_resolver import S3FrameResolver
 
 
 CAMERA_ID = "11111111-1111-1111-1111-111111111111"
@@ -38,6 +39,29 @@ def test_frame_ingested_loader_falls_back_to_frame_ref(tmp_path) -> None:
     jsonl_path.write_text(json.dumps(_event(frame_ref=str(frame_path), frame_uri="s3://bucket/frame.jpg")) + "\n", encoding="utf-8")
 
     loaded = list(FrameIngestedJsonlLoader(jsonl_path).iter_messages())
+
+    assert loaded[0].message.frame_ref == str(frame_path.resolve())
+
+
+def test_frame_resolver_falls_back_to_local_frame_ref_when_remote_uri_is_bad(tmp_path) -> None:
+    frame_path = tmp_path / "frame.jpg"
+    frame_path.write_bytes(b"\xff\xd8test\xff\xd9")
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(
+        json.dumps(_event(frame_ref=str(frame_path), frame_uri="s3:///missing-bucket.jpg")) + "\n",
+        encoding="utf-8",
+    )
+    resolver = FrameResolver(
+        remote_resolver=S3FrameResolver(
+            endpoint="localhost:9000",
+            access_key="minio",
+            secret_key="minio123",
+            cache_dir=tmp_path / "cache",
+            client=_FakeS3Client({}),
+        )
+    )
+
+    loaded = list(FrameIngestedJsonlLoader(jsonl_path, frame_resolver=resolver).iter_messages())
 
     assert loaded[0].message.frame_ref == str(frame_path.resolve())
 
@@ -91,6 +115,35 @@ def test_frame_resolver_supports_search_roots(tmp_path) -> None:
     assert loaded[0].message.frame_ref == str(frame_path.resolve())
 
 
+def test_frame_resolver_downloads_s3_frame_uri_and_preserves_original_refs(tmp_path) -> None:
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(
+        json.dumps(
+            _event(
+                frame_ref="s3://vigilante-frames/frames/cam01/frame.jpg",
+                frame_uri="s3://vigilante-frames/frames/cam01/frame.jpg",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    remote_resolver = S3FrameResolver(
+        endpoint="localhost:9000",
+        access_key="minio",
+        secret_key="minio123",
+        cache_dir=tmp_path / "cache",
+        client=_FakeS3Client({("vigilante-frames", "frames/cam01/frame.jpg"): b"\xff\xd8test\xff\xd9"}),
+    )
+    resolver = FrameResolver(remote_resolver=remote_resolver)
+
+    loaded = list(FrameIngestedJsonlLoader(jsonl_path, frame_resolver=resolver).iter_messages())
+
+    assert Path(loaded[0].message.frame_ref).is_file()
+    assert loaded[0].message.payload.frame_uri == "s3://vigilante-frames/frames/cam01/frame.jpg"
+    assert loaded[0].message.payload.metadata["original_frame_ref"] == "s3://vigilante-frames/frames/cam01/frame.jpg"
+    assert loaded[0].message.payload.metadata["original_frame_uri"] == "s3://vigilante-frames/frames/cam01/frame.jpg"
+
+
 def _event(*, frame_ref: str, frame_uri: str | None = None) -> dict:
     payload = {
         "camera_id": CAMERA_ID,
@@ -116,3 +169,10 @@ def _event(*, frame_ref: str, frame_uri: str | None = None) -> dict:
         },
     }
 
+
+class _FakeS3Client:
+    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
+        self.objects = objects
+
+    def fget_object(self, bucket: str, object_key: str, file_path: str) -> None:
+        Path(file_path).write_bytes(self.objects[(bucket, object_key)])

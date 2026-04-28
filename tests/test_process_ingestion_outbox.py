@@ -7,6 +7,8 @@ from pathlib import Path
 from app.ingestion import FileCheckpointStore, FileEventDeduper, RejectedEventStore
 from app.runner.process_ingestion_outbox import process_ingestion_outbox
 from app.services.track_continuity_service import TrackContinuityService
+from app.storage.frame_resolver import FrameResolver
+from app.storage.s3_frame_resolver import S3FrameResolver
 
 
 CAMERA_ID = "11111111-1111-1111-1111-111111111111"
@@ -210,6 +212,74 @@ def test_process_ingestion_outbox_applies_basic_temporal_track_continuity(tmp_pa
     assert statuses == ["opened_local_track", "reused_recent_track", "opened_local_track"]
 
 
+def test_process_ingestion_outbox_processes_remote_s3_frame(tmp_path) -> None:
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(
+        json.dumps(_event(frame_ref="s3://vigilante-frames/frames/cam01/frame.jpg"))
+        + "\n",
+        encoding="utf-8",
+    )
+    resolver = FrameResolver(
+        remote_resolver=S3FrameResolver(
+            endpoint="localhost:9000",
+            access_key="minio",
+            secret_key="minio123",
+            cache_dir=tmp_path / "cache",
+            client=_FakeS3Client({("vigilante-frames", "frames/cam01/frame.jpg"): b"\xff\xd8test\xff\xd9"}),
+        )
+    )
+    seen_frame_refs: list[str] = []
+
+    def processor(message):
+        seen_frame_refs.append(message.frame_ref)
+        assert Path(message.frame_ref).is_file()
+        assert message.payload.frame_uri == "s3://vigilante-frames/frames/cam01/frame.jpg"
+        return {"event_type": "processed", "payload": {"frame_ref": message.frame_ref}}
+
+    result = process_ingestion_outbox(
+        jsonl_path,
+        processor=processor,
+        frame_resolver=resolver,
+        **_stores(tmp_path),
+    )
+
+    assert result.processed == 1
+    assert result.rejected == 0
+    assert seen_frame_refs == [str((tmp_path / "cache" / "vigilante-frames" / "frames" / "cam01" / "frame.jpg").resolve())]
+
+
+def test_process_ingestion_outbox_rejects_invalid_remote_uri_without_aborting(tmp_path) -> None:
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(
+        json.dumps(_event(event_id="evt_invalid_s3", frame_ref="s3:///missing-bucket.jpg"))
+        + "\n",
+        encoding="utf-8",
+    )
+    stores = _stores(tmp_path)
+
+    result = process_ingestion_outbox(
+        jsonl_path,
+        processor=lambda message: {"event_type": "should_not_run"},
+        frame_resolver=FrameResolver(
+            remote_resolver=S3FrameResolver(
+                endpoint="localhost:9000",
+                access_key="minio",
+                secret_key="minio123",
+                cache_dir=tmp_path / "cache",
+                client=_FakeS3Client({}),
+            )
+        ),
+        **stores,
+    )
+    rejected = _read_jsonl(stores["rejected_event_store"].path)
+
+    assert result.processed == 0
+    assert result.rejected == 1
+    assert result.frame_resolution_errors == 1
+    assert rejected[0]["reason"] == "frame_resolution_failed"
+    assert rejected[0]["details"]["reason"] == "invalid_remote_frame_uri"
+
+
 def _stores(tmp_path) -> dict:
     return {
         "checkpoint_store": FileCheckpointStore(tmp_path / "state" / "checkpoint.json"),
@@ -266,3 +336,11 @@ def _event(
             "idempotency_key": "frame:test",
         },
     }
+
+
+class _FakeS3Client:
+    def __init__(self, objects: dict[tuple[str, str], bytes]) -> None:
+        self.objects = objects
+
+    def fget_object(self, bucket: str, object_key: str, file_path: str) -> None:
+        Path(file_path).write_bytes(self.objects[(bucket, object_key)])
