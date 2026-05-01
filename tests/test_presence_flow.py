@@ -217,3 +217,26 @@ def test_recognition_event_can_carry_manual_review_payload():
     assert event["event_type"] == "manual_review_required"
     assert event["payload"]["requires_human_review"] is True
     assert event["payload"]["review_type"] == "cross_camera_correlation"
+
+
+def test_recognition_event_keeps_canonical_evidence_refs_over_payload_details():
+    track_id = uuid4()
+    subject_id = uuid4()
+    canonical_ref = "s3://vigilante-frames/frames/cam01/frame.jpg"
+
+    event = build_recognition_event(
+        event_type="human_presence_no_face",
+        camera_id=CAMERA_ID,
+        track_id=track_id,
+        subject_id=subject_id,
+        severity="low",
+        confidence=0.6,
+        decision_reason=["human_track_confirmed"],
+        frame_ref=canonical_ref,
+        evidence_refs=[canonical_ref],
+        payload_details={
+            "evidence_refs": [".runtime/ingestion/frame-cache/vigilante-frames/frame.jpg"],
+        },
+    )
+
+    assert event["payload"]["evidence_refs"] == [canonical_ref]

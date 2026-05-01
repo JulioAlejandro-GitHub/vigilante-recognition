@@ -1042,7 +1042,7 @@ def test_process_ingestion_jsonl_runs_worker_pipeline_with_resolved_frame(mock_g
     assert result.emitted_events[0]["context"]["camera_id"] == CAMERA_ID
     recognition_event_call = mock_repo_instance.add_recognition_event.call_args.kwargs
     assert recognition_event_call["camera_id"] == resolved_camera_id
-    assert recognition_event_call["evidence_refs"] == [str(frame_path)]
+    assert recognition_event_call["evidence_refs"] == ["logical-frame-ref.jpg"]
     assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
     mock_session.commit.assert_called_once()
 
@@ -1130,12 +1130,19 @@ def test_remote_s3_ingestion_event_runs_worker_pipeline_with_resolved_frame(mock
     )
 
     cached_frame = (tmp_path / "cache" / "vigilante-frames" / "frames" / "cam01" / "face_low_quality.jpg").resolve()
+    canonical_ref = f"s3://vigilante-frames/{object_key}"
     assert result.processed == 1
     assert result.rejected == 0
     assert result.emitted_events[0]["context"]["camera_id"] == CAMERA_ID
+    assert result.emitted_events[0]["payload"]["evidence_refs"] == [canonical_ref]
+    assert result.emitted_events[0]["payload"]["semantic_descriptor"]["source_frame_ref"] == canonical_ref
+    assert str(cached_frame) not in json.dumps(result.emitted_events[0])
     recognition_event_call = mock_repo_instance.add_recognition_event.call_args.kwargs
     assert recognition_event_call["camera_id"] == resolved_camera_id
-    assert recognition_event_call["evidence_refs"] == [str(cached_frame)]
+    assert recognition_event_call["evidence_refs"] == [canonical_ref]
+    assert recognition_event_call["payload"]["evidence_refs"] == [canonical_ref]
+    assert recognition_event_call["payload"]["semantic_descriptor"]["source_frame_ref"] == canonical_ref
+    assert str(cached_frame) not in json.dumps(recognition_event_call["payload"])
     assert mock_repo_instance.create_subject.call_args.kwargs["camera_id"] == resolved_camera_id
     mock_session.commit.assert_called_once()
 

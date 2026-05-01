@@ -234,6 +234,8 @@ def test_process_ingestion_outbox_processes_remote_s3_frame(tmp_path) -> None:
         seen_frame_refs.append(message.frame_ref)
         assert Path(message.frame_ref).is_file()
         assert message.payload.frame_uri == "s3://vigilante-frames/frames/cam01/frame.jpg"
+        assert message.canonical_frame_ref == "s3://vigilante-frames/frames/cam01/frame.jpg"
+        assert message.cached_path == message.frame_ref
         return {"event_type": "processed", "payload": {"frame_ref": message.frame_ref}}
 
     result = process_ingestion_outbox(
@@ -246,6 +248,41 @@ def test_process_ingestion_outbox_processes_remote_s3_frame(tmp_path) -> None:
     assert result.processed == 1
     assert result.rejected == 0
     assert seen_frame_refs == [str((tmp_path / "cache" / "vigilante-frames" / "frames" / "cam01" / "frame.jpg").resolve())]
+
+
+def test_process_ingestion_outbox_uses_frame_uri_as_canonical_when_frame_ref_missing(tmp_path) -> None:
+    canonical_ref = "s3://vigilante-frames/frames/cam01/frame-from-uri.jpg"
+    event = _event(frame_ref=canonical_ref, frame_uri=canonical_ref)
+    event["payload"].pop("frame_ref")
+    jsonl_path = tmp_path / "frame_ingested.jsonl"
+    jsonl_path.write_text(json.dumps(event) + "\n", encoding="utf-8")
+    resolver = FrameResolver(
+        remote_resolver=S3FrameResolver(
+            endpoint="localhost:9000",
+            access_key="minio",
+            secret_key="minio123",
+            cache_dir=tmp_path / "cache",
+            client=_FakeS3Client({("vigilante-frames", "frames/cam01/frame-from-uri.jpg"): b"\xff\xd8test\xff\xd9"}),
+        )
+    )
+    canonical_refs: list[str | None] = []
+
+    def processor(message):
+        assert Path(message.frame_ref).is_file()
+        canonical_refs.append(message.canonical_frame_ref)
+        return {"event_type": "processed", "payload": {"frame_ref": message.canonical_frame_ref}}
+
+    result = process_ingestion_outbox(
+        jsonl_path,
+        processor=processor,
+        frame_resolver=resolver,
+        **_stores(tmp_path),
+    )
+
+    assert result.processed == 1
+    assert result.rejected == 0
+    assert canonical_refs == [canonical_ref]
+    assert result.emitted_events[0]["payload"]["frame_ref"] == canonical_ref
 
 
 def test_process_ingestion_outbox_rejects_invalid_remote_uri_without_aborting(tmp_path) -> None:

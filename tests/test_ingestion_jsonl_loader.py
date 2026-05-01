@@ -142,6 +142,8 @@ def test_frame_resolver_downloads_s3_frame_uri_and_preserves_original_refs(tmp_p
     assert loaded[0].message.payload.frame_uri == "s3://vigilante-frames/frames/cam01/frame.jpg"
     assert loaded[0].message.payload.metadata["original_frame_ref"] == "s3://vigilante-frames/frames/cam01/frame.jpg"
     assert loaded[0].message.payload.metadata["original_frame_uri"] == "s3://vigilante-frames/frames/cam01/frame.jpg"
+    assert loaded[0].message.canonical_frame_ref == "s3://vigilante-frames/frames/cam01/frame.jpg"
+    assert loaded[0].message.cached_path == loaded[0].message.frame_ref
 
 
 def _event(*, frame_ref: str, frame_uri: str | None = None) -> dict:

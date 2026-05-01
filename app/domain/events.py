@@ -13,22 +13,25 @@ def build_recognition_event(
     severity: str,
     confidence: float,
     decision_reason: list[str],
-    frame_ref: str,
+    frame_ref: str | None,
+    evidence_refs: list[str] | None = None,
     payload_details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     camera_id_value = str(camera_id)
     track_id_value = str(track_id)
     subject_id_value = str(subject_id)
+    resolved_evidence_refs = evidence_refs if evidence_refs is not None else ([frame_ref] if frame_ref else [])
     payload = {
         "severity": severity,
         "confidence": confidence,
         "decision_reason": decision_reason,
-        "evidence_refs": [frame_ref],
+        "evidence_refs": resolved_evidence_refs,
         "requires_human_review": False,
     }
     if payload_details:
         payload.update(payload_details)
+    payload["evidence_refs"] = resolved_evidence_refs
 
     return {
         "event_id": f"evt_{track_id_value}_{event_type}",

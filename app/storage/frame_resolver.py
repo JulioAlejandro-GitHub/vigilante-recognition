@@ -6,6 +6,7 @@ from typing import Protocol
 from urllib.parse import unquote, urlparse
 
 from app.domain.entities import FrameIngestedMessage
+from app.services.canonical_frame_ref_service import CanonicalFrameRefService
 
 
 class FrameResolutionError(FileNotFoundError):
@@ -69,8 +70,10 @@ class LocalFrameResolver:
         if message.frame_ref == resolved_frame_ref:
             return message
 
+        canonical_frame_ref = CanonicalFrameRefService().resolve(message).frame_ref
         payload_metadata = dict(message.payload.metadata or {})
-        payload_metadata.setdefault("original_frame_ref", message.frame_ref)
+        if message.payload.frame_ref:
+            payload_metadata.setdefault("original_frame_ref", message.payload.frame_ref)
         if message.payload.frame_uri:
             payload_metadata.setdefault("original_frame_uri", message.payload.frame_uri)
 
@@ -81,13 +84,20 @@ class LocalFrameResolver:
                 "metadata": payload_metadata,
             }
         )
-        return message.model_copy(update={"payload": resolved_payload})
+        return message.model_copy(
+            update={
+                "payload": resolved_payload,
+                "canonical_frame_ref": canonical_frame_ref,
+                "cached_path": resolved_frame_ref,
+            }
+        )
 
     def _references(self, message: FrameIngestedMessage) -> list[str]:
         refs = []
         if message.payload.frame_uri:
             refs.append(message.payload.frame_uri)
-        refs.append(message.frame_ref)
+        if message.payload.frame_ref:
+            refs.append(message.payload.frame_ref)
         return list(dict.fromkeys(refs))
 
     def _candidate_paths(self, local_path: Path) -> list[Path]:
@@ -173,8 +183,10 @@ class FrameResolver:
         if message.frame_ref == resolved_frame_ref:
             return message
 
+        canonical_frame_ref = CanonicalFrameRefService().resolve(message).frame_ref
         payload_metadata = dict(message.payload.metadata or {})
-        payload_metadata.setdefault("original_frame_ref", message.frame_ref)
+        if message.payload.frame_ref:
+            payload_metadata.setdefault("original_frame_ref", message.payload.frame_ref)
         if message.payload.frame_uri:
             payload_metadata.setdefault("original_frame_uri", message.payload.frame_uri)
 
@@ -185,13 +197,20 @@ class FrameResolver:
                 "metadata": payload_metadata,
             }
         )
-        return message.model_copy(update={"payload": resolved_payload})
+        return message.model_copy(
+            update={
+                "payload": resolved_payload,
+                "canonical_frame_ref": canonical_frame_ref,
+                "cached_path": resolved_frame_ref,
+            }
+        )
 
     def _references(self, message: FrameIngestedMessage) -> list[str]:
         refs = []
         if message.payload.frame_uri:
             refs.append(message.payload.frame_uri)
-        refs.append(message.frame_ref)
+        if message.payload.frame_ref:
+            refs.append(message.payload.frame_ref)
         return list(dict.fromkeys(refs))
 
 

@@ -15,7 +15,7 @@ class FramePayload(BaseModel):
     camera_id: str
     external_camera_key: Optional[str] = None
     captured_at: datetime
-    frame_ref: str
+    frame_ref: Optional[str] = None
     frame_uri: Optional[str] = None
     width: Optional[int] = None
     height: Optional[int] = None
@@ -32,6 +32,8 @@ class FrameIngestedMessage(BaseModel):
     occurred_at: datetime
     payload: FramePayload
     context: dict[str, Any]
+    canonical_frame_ref: Optional[str] = None
+    cached_path: Optional[str] = None
 
     @property
     def camera_id(self) -> str:
@@ -52,7 +54,7 @@ class FrameIngestedMessage(BaseModel):
 
     @property
     def frame_ref(self) -> str:
-        return self.payload.frame_ref
+        return self.payload.frame_ref or self.cached_path or self.payload.frame_uri or ""
 
 
 class PresenceDecision(BaseModel):

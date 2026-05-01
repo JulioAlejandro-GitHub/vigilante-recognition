@@ -48,6 +48,17 @@ def test_semantic_descriptor_generation_for_low_quality_fixture():
     assert descriptor.source_frame_ref.endswith("face_low_quality.jpg")
 
 
+def test_semantic_descriptor_can_publish_canonical_source_frame_ref():
+    service = SemanticDescriptorService()
+    fixture = load_fixture_message("tests/fixtures/frame_ingested_no_face.json")
+    canonical_ref = "s3://vigilante-frames/frames/cam01/face_low_quality.jpg"
+
+    descriptor = service.generate(frame_ref=fixture.frame_ref, source_frame_ref=canonical_ref)
+
+    assert descriptor.source_frame_ref == canonical_ref
+    assert descriptor.descriptor["source_frame_ref"] == canonical_ref
+
+
 def test_semantic_descriptor_similarity_prefers_same_image_signature():
     service = SemanticDescriptorService()
     no_face_fixture = load_fixture_message("tests/fixtures/frame_ingested_no_face.json")

@@ -36,9 +36,11 @@ class SemanticDescriptorService:
         self,
         *,
         frame_ref: str,
+        source_frame_ref: str | None = None,
         face_detection: FaceDetectionResult | None = None,
     ) -> SemanticDescriptorResult:
         frame_path = self._resolve_frame_path(frame_ref)
+        published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
         requested_backend = settings.semantic_descriptor_backend
         generation_trace = {
             "requested_backend": requested_backend,
@@ -50,7 +52,7 @@ class SemanticDescriptorService:
         if frame_path is None:
             return SemanticDescriptorResult(
                 backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
-                source_frame_ref=frame_ref,
+                source_frame_ref=published_source_frame_ref,
                 rejection_reasons=["frame_ref_not_found"],
                 descriptor={"generation_trace": generation_trace},
             )
@@ -92,7 +94,7 @@ class SemanticDescriptorService:
                 descriptor, signature, confidence = self._normalize_descriptor(
                     raw_descriptor=backend_output.descriptor,
                     backend_name=backend_output.backend_name,
-                    frame_ref=frame_ref,
+                    frame_ref=published_source_frame_ref,
                     face_detection=face_detection,
                     confidence_override=backend_output.confidence,
                     raw_summary=backend_output.raw_summary,
@@ -116,7 +118,7 @@ class SemanticDescriptorService:
                     descriptor=descriptor,
                     signature=signature,
                     confidence=confidence,
-                    source_frame_ref=frame_ref,
+                    source_frame_ref=published_source_frame_ref,
                 )
             except SemanticBackendError as exc:
                 rejection_reasons.append(str(exc))
@@ -143,7 +145,7 @@ class SemanticDescriptorService:
 
         return SemanticDescriptorResult(
             backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
-            source_frame_ref=frame_ref,
+            source_frame_ref=published_source_frame_ref,
             rejection_reasons=rejection_reasons or ["semantic_descriptor_unavailable"],
             descriptor={"generation_trace": generation_trace},
         )

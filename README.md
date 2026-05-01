@@ -213,12 +213,21 @@ La estrategia de resolución es:
 4. si el valor es relativo, se resuelve contra el directorio actual y luego contra
    `INGESTION_FRAME_SEARCH_ROOTS`, si está configurado.
 
-`payload.frame_ref` sigue siendo el campo canónico del contrato. Cuando el loader
-necesita usar `frame_uri` o descargar un remoto para abrir el archivo, pasa al
-pipeline una copia del mensaje con `payload.frame_ref` resuelto al path físico y
-conserva los valores originales en `payload.metadata.original_frame_ref` /
-`payload.metadata.original_frame_uri`. `payload.frame_uri` se conserva como URI
-remoto o alias práctico.
+`payload.frame_ref` / `payload.frame_uri` son las referencias canónicas de entrada.
+Cuando el loader necesita usar `frame_uri` o descargar un remoto para abrir el
+archivo, pasa al pipeline una copia interna del mensaje con `payload.frame_ref`
+resuelto al path físico local. Ese path queda disponible solo como detalle de
+ejecución (`cached_path`) para OpenCV, embeddings y diagnóstico.
+
+Los eventos emitidos por recognition no publican ese path local. `payload.evidence_refs`,
+`semantic_descriptor.source_frame_ref`, el outbox y la metadata de evidencia usan
+la referencia canónica compartida. La resolución prioriza refs compartidas
+`s3://...` / `minio://...` desde `canonical_frame_ref`, los valores originales
+preservados (`payload.metadata.original_frame_ref` /
+`payload.metadata.original_frame_uri`) y luego `payload.frame_ref` /
+`payload.frame_uri`. Para frames S3/MinIO, la salida conserva refs como
+`s3://bucket/key` o `minio://bucket/key`; el cache
+`.runtime/ingestion/frame-cache` no forma parte del contrato downstream.
 
 Para MinIO local:
 

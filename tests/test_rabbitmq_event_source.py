@@ -123,6 +123,8 @@ def test_process_rabbitmq_frames_processes_remote_s3_frame(tmp_path) -> None:
     def processor(message):
         processed.append(message.frame_ref)
         assert Path(message.frame_ref).is_file()
+        assert message.canonical_frame_ref == "s3://vigilante-frames/frames/cam01/frame.jpg"
+        assert message.cached_path == message.frame_ref
         return {"event_type": "processed", "payload": {"frame_ref": message.frame_ref}}
 
     result = process_rabbitmq_frames(

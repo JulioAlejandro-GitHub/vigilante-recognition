@@ -30,6 +30,7 @@ from app.services.conflict_resolution_service import ConflictResolutionService
 from app.services.cross_camera_correlation_service import CrossCameraCorrelationService
 from app.services.face_embedding_service import FaceEmbeddingService
 from app.services.face_matching_service import FaceMatchingService
+from app.services.canonical_frame_ref_service import CanonicalFrameRefService
 from app.services.presence_service import PresenceService
 from app.services.recurrent_subject_service import RecurrentSubjectService
 from app.services.semantic_descriptor_service import SemanticDescriptorService
@@ -43,11 +44,14 @@ def _safe_generate_semantic_descriptor(
     semantic_descriptor_service: SemanticDescriptorService,
     *,
     frame_ref: str,
+    source_frame_ref: str | None = None,
     face_detection,
 ) -> SemanticDescriptorResult:
+    published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
     try:
         return semantic_descriptor_service.generate(
             frame_ref=frame_ref,
+            source_frame_ref=published_source_frame_ref,
             face_detection=face_detection,
         )
     except Exception as exc:  # pragma: no cover - defensive path
@@ -58,9 +62,10 @@ def _safe_generate_semantic_descriptor(
         )
         return SemanticDescriptorResult(
             backend="simple_color_signature_v1",
-            source_frame_ref=frame_ref,
+            source_frame_ref=published_source_frame_ref,
             rejection_reasons=["semantic_descriptor_generation_unexpected_failure"],
             descriptor={
+                "source_frame_ref": published_source_frame_ref,
                 "generation_trace": {
                     "requested_backend": settings.semantic_descriptor_backend,
                     "fallback_enabled": settings.semantic_enable_fallback,
@@ -86,6 +91,29 @@ def process_fixture(fixture_path: str) -> dict:
 
 def process_message(message: FrameIngestedMessage) -> dict:
     with get_session() as session:
+        frame_ref_service = CanonicalFrameRefService()
+        canonical_resolution = frame_ref_service.resolve(message)
+        published_frame_ref = canonical_resolution.frame_ref
+        published_evidence_refs = [published_frame_ref] if published_frame_ref else []
+        semantic_source_frame_ref = published_frame_ref or ""
+        processing_frame_ref = message.frame_ref
+        if published_frame_ref is None:
+            logger.warning(
+                "canonical_frame_ref_unavailable event_id=%s cached_path=%s reason=%s",
+                message.event_id,
+                message.cached_path,
+                canonical_resolution.fallback_reason,
+            )
+        elif canonical_resolution.fallback_reason:
+            logger.info(
+                "canonical_frame_ref_fallback event_id=%s source=%s reason=%s published_frame_ref=%s cached_path=%s",
+                message.event_id,
+                canonical_resolution.source,
+                canonical_resolution.fallback_reason,
+                published_frame_ref,
+                message.cached_path,
+            )
+
         repo = RecognitionRepository(session)
         track_service = TrackService(repo)
         presence_service = PresenceService()
@@ -103,13 +131,13 @@ def process_message(message: FrameIngestedMessage) -> dict:
         subject, track, is_new_appearance = track_service.open_track_from_frame(message)
         track = track_service.confirm_basic_presence(track)
         face_detection = presence_service.inspect_face(
-            frame_ref=message.frame_ref,
+            frame_ref=processing_frame_ref,
             quality_metadata=message.payload.quality_metadata,
         )
         track_service.register_face_observation(
             track=track,
             face_detection=face_detection,
-            frame_ref=message.frame_ref,
+            frame_ref=published_frame_ref or "",
             detected_at=message.captured_at,
         )
         embedding_result = None
@@ -119,7 +147,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
         recurrent_resolution = None
         if face_detection.usable:
             embedding_result = embedding_service.generate(
-                frame_ref=message.frame_ref,
+                frame_ref=processing_frame_ref,
                 face_detection=face_detection,
             )
             match_result = matching_service.match(
@@ -134,8 +162,13 @@ def process_message(message: FrameIngestedMessage) -> dict:
             if not match_result.identified:
                 semantic_descriptor_result = _safe_generate_semantic_descriptor(
                     semantic_descriptor_service,
-                    frame_ref=message.frame_ref,
+                    frame_ref=processing_frame_ref,
+                    source_frame_ref=semantic_source_frame_ref,
                     face_detection=face_detection,
+                )
+                semantic_descriptor_result = frame_ref_service.canonicalize_semantic_descriptor(
+                    semantic_descriptor_result,
+                    canonical_frame_ref=published_frame_ref,
                 )
                 if semantic_descriptor_result.generated:
                     track = track_service.register_semantic_descriptor(
@@ -185,7 +218,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                             subject=target_subject,
                             camera_id=track.camera_id,
                             observed_at=message.captured_at,
-                            frame_ref=message.frame_ref,
+                            frame_ref=published_frame_ref or "",
                             face_detection=face_detection,
                             embedding_result=embedding_result,
                             match_result=match_result,
@@ -196,7 +229,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                         subject=subject,
                         camera_id=track.camera_id,
                         observed_at=message.captured_at,
-                        frame_ref=message.frame_ref,
+                        frame_ref=published_frame_ref or "",
                         face_detection=face_detection,
                         embedding_result=embedding_result,
                         match_result=match_result,
@@ -235,7 +268,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                     subject=subject,
                     camera_id=track.camera_id,
                     observed_at=message.captured_at,
-                    frame_ref=message.frame_ref,
+                    frame_ref=published_frame_ref or "",
                     face_detection=face_detection,
                     embedding_result=embedding_result,
                     match_result=match_result,
@@ -244,8 +277,13 @@ def process_message(message: FrameIngestedMessage) -> dict:
         else:
             semantic_descriptor_result = _safe_generate_semantic_descriptor(
                 semantic_descriptor_service,
-                frame_ref=message.frame_ref,
+                frame_ref=processing_frame_ref,
+                source_frame_ref=semantic_source_frame_ref,
                 face_detection=face_detection,
+            )
+            semantic_descriptor_result = frame_ref_service.canonicalize_semantic_descriptor(
+                semantic_descriptor_result,
+                canonical_frame_ref=published_frame_ref,
             )
             if semantic_descriptor_result.generated:
                 track = track_service.register_semantic_descriptor(
@@ -257,7 +295,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                 subject=subject,
                 camera_id=track.camera_id,
                 observed_at=message.captured_at,
-                frame_ref=message.frame_ref,
+                frame_ref=published_frame_ref or "",
                 face_detection=face_detection,
                 semantic_descriptor_result=semantic_descriptor_result,
             )
@@ -295,7 +333,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                             subject=target_subject,
                             camera_id=track.camera_id,
                             observed_at=message.captured_at,
-                            frame_ref=message.frame_ref,
+                            frame_ref=published_frame_ref or "",
                             face_detection=face_detection,
                             embedding_result=embedding_result,
                             match_result=match_result,
@@ -344,7 +382,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
             severity=decision.severity,
             confidence=decision.confidence,
             decision_reason=decision.decision_reason,
-            frame_ref=message.frame_ref,
+            frame_ref=published_frame_ref,
+            evidence_refs=published_evidence_refs,
             payload_details=decision.payload,
         )
         events_to_publish = [event]
@@ -357,7 +396,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
             severity=decision.severity,
             confidence=decision.confidence,
             decision_reason=decision.decision_reason,
-            evidence_refs=[message.frame_ref],
+            evidence_refs=published_evidence_refs,
             payload=event["payload"],
         )
         repo.add_outbox_event(
@@ -379,7 +418,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
                     severity=supplemental.severity,
                     confidence=supplemental.confidence,
                     decision_reason=supplemental.decision_reason,
-                    frame_ref=message.frame_ref,
+                    frame_ref=published_frame_ref,
+                    evidence_refs=published_evidence_refs,
                     payload_details=supplemental.payload,
                 )
                 supplemental_recognition_event = repo.add_recognition_event(
@@ -391,7 +431,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                     severity=supplemental.severity,
                     confidence=supplemental.confidence,
                     decision_reason=supplemental.decision_reason,
-                    evidence_refs=[message.frame_ref],
+                    evidence_refs=published_evidence_refs,
                     payload=supplemental_event["payload"],
                 )
                 repo.add_outbox_event(
