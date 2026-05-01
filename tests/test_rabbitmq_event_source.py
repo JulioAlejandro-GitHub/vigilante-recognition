@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
 from app.ingestion import FileEventDeduper, RejectedEventStore
-from app.ingestion.rabbitmq_event_source import RabbitMqDelivery
+from app.ingestion.rabbitmq_event_source import RabbitMqDelivery, RabbitMqEventSource
 from app.messaging.topology import FrameIngestedTopology
 from app.runner.process_rabbitmq_frames import process_rabbitmq_frames
 from app.storage.frame_resolver import FrameResolver
@@ -194,6 +195,27 @@ def test_process_rabbitmq_frames_rejects_after_retry_limit(tmp_path) -> None:
     assert _read_jsonl(rejected_store.path)[0]["reason"] == "processing_failed_retries_exhausted"
 
 
+def test_rabbitmq_event_source_logs_ready_after_declaring_topology(caplog) -> None:
+    channel = _FakeRabbitMqChannel()
+    source = RabbitMqEventSource(
+        host="localhost",
+        port=5672,
+        username="guest",
+        password="guest",
+        virtual_host="/",
+        topology=FrameIngestedTopology(),
+        prefetch_count=7,
+        connection_factory=lambda: _FakeRabbitMqConnection(channel),
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.ingestion.rabbitmq_event_source"):
+        source._ensure_channel()
+
+    assert channel.prefetch_count == 7
+    assert "rabbitmq_consumer_ready" in caplog.text
+    assert "queue=vigilante.recognition.frame_ingested" in caplog.text
+
+
 def _frame(tmp_path: Path) -> Path:
     frame_path = tmp_path / "frame.jpg"
     frame_path.write_bytes(b"\xff\xd8test\xff\xd9")
@@ -292,3 +314,35 @@ class _FakeS3Client:
 
     def fget_object(self, bucket: str, object_key: str, file_path: str) -> None:
         Path(file_path).write_bytes(self.objects[(bucket, object_key)])
+
+
+class _FakeRabbitMqConnection:
+    is_closed = False
+
+    def __init__(self, channel: "_FakeRabbitMqChannel") -> None:
+        self._channel = channel
+
+    def channel(self) -> "_FakeRabbitMqChannel":
+        return self._channel
+
+    def close(self) -> None:
+        self.is_closed = True
+
+
+class _FakeRabbitMqChannel:
+    is_open = True
+
+    def __init__(self) -> None:
+        self.prefetch_count: int | None = None
+
+    def exchange_declare(self, **kwargs) -> None:
+        pass
+
+    def queue_declare(self, **kwargs) -> None:
+        pass
+
+    def queue_bind(self, **kwargs) -> None:
+        pass
+
+    def basic_qos(self, *, prefetch_count: int) -> None:
+        self.prefetch_count = prefetch_count

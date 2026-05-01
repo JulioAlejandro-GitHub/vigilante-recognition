@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Iterator
 
 from app.messaging.topology import FrameIngestedTopology, declare_frame_ingested_topology
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -107,6 +110,16 @@ class RabbitMqEventSource:
         self._channel = self._connection.channel()
         declare_frame_ingested_topology(self._channel, self.topology)
         self._channel.basic_qos(prefetch_count=self.prefetch_count)
+        logger.info(
+            "rabbitmq_consumer_ready host=%s port=%s vhost=%s queue=%s exchange=%s routing_key=%s prefetch_count=%s",
+            self.host,
+            self.port,
+            self.virtual_host,
+            self.topology.recognition_queue,
+            self.topology.exchange,
+            self.topology.routing_key,
+            self.prefetch_count,
+        )
         return self._channel
 
     def _build_connection(self):

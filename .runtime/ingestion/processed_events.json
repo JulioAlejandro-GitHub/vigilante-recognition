@@ -190,6 +190,11 @@
       "processed_at": "2026-05-01T13:46:05.574655+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_04345ec4-f0a6-59af-9e61-1b78b36e02b0": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:46.483188+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_0473515b-6610-535c-b2c1-030e4ca1a74c": {
       "line_number": null,
       "processed_at": "2026-05-01T13:09:11.937930+00:00",
@@ -280,9 +285,19 @@
       "processed_at": "2026-05-01T13:04:55.044481+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_0622576a-b0a2-53f0-b1ed-f3d0bc68e105": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:26.429008+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_06415420-f2e5-5131-94e8-821445dd1418": {
       "line_number": null,
       "processed_at": "2026-05-01T13:17:33.977844+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_064e3b18-cc82-529b-963d-0e87c5974fbf": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:18.477428+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_0651ec24-f9fc-5951-bdae-4612292d81ee": {
@@ -350,6 +365,11 @@
       "processed_at": "2026-05-01T13:00:33.900791+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_080d4366-629d-5c7b-8782-33381e035b1c": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:26.595169+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_08137477-9992-51e8-8d2c-10b5dfa29694": {
       "line_number": null,
       "processed_at": "2026-05-01T13:15:02.968056+00:00",
@@ -388,6 +408,11 @@
     "evt_08bc7fa2-d666-5c19-9b2f-14d3130f9e68": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:13.358269+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_08f02b62-2ed7-5ebf-8811-514c6a4a74ee": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:41.535977+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_0900091a-2735-5373-a78a-02ed011ca647": {
@@ -820,6 +845,11 @@
       "processed_at": "2026-05-01T13:08:35.933535+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_10d727d1-bef4-5457-8235-b34d5bdad853": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:37.484041+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_10d89f14-5801-578f-a449-4695bad06214": {
       "line_number": null,
       "processed_at": "2026-05-01T13:19:27.929660+00:00",
@@ -923,6 +953,11 @@
     "evt_13603931-3d75-5f47-bf60-0d93ca5a02ee": {
       "line_number": null,
       "processed_at": "2026-05-01T17:00:04.098813+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_136d7728-e763-5ee7-b357-9d6fb837649c": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:39.618115+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_137c5c72-2034-593a-b904-d2a37251ed74": {
@@ -1055,6 +1090,11 @@
       "processed_at": "2026-05-01T13:04:23.938049+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_16b6c93e-5d76-574d-9879-daa5a7047ebf": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:23.495648+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_16b8b883-58e7-5ade-887d-bca9175c0f63": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:10.937555+00:00",
@@ -1110,6 +1150,11 @@
       "processed_at": "2026-05-01T16:59:33.032529+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_1738e372-5406-5561-bdb5-9a318dcf4c10": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:16.665298+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_175a95c5-d809-5215-8da4-736eebd4b17e": {
       "line_number": null,
       "processed_at": "2026-05-01T13:02:23.964984+00:00",
@@ -1143,6 +1188,11 @@
     "evt_182a8780-92fa-57cf-b3d3-1bebcd74609c": {
       "line_number": null,
       "processed_at": "2026-05-01T13:00:13.904087+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_187224e3-e4d1-5fe2-9d90-e84c17750940": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:06.802141+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_1876c037-3265-5698-aacb-be6483ee9566": {
@@ -1235,6 +1285,11 @@
       "processed_at": "2026-05-01T13:04:13.861349+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_1a62b786-85fe-56d2-8d49-54810a04fc75": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:55.551758+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_1a7fe1b1-5925-5102-848d-98ef67a790ec": {
       "line_number": null,
       "processed_at": "2026-05-01T17:00:06.198463+00:00",
@@ -1258,6 +1313,11 @@
     "evt_1af07488-24a7-522d-bd15-f2faa6c381bf": {
       "line_number": null,
       "processed_at": "2026-05-01T13:40:41.025654+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_1afab389-0dcb-5a8b-9785-4f21bd43f9ff": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:53:03.633027+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_1afb80a5-fcf2-5886-9740-b6ba142e5c11": {
@@ -1288,6 +1348,11 @@
     "evt_1c073e3b-7d94-5ec9-adb9-b6cd19e88b8b": {
       "line_number": null,
       "processed_at": "2026-05-01T16:59:11.004254+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_1c0cfa39-945e-54e3-9ec0-3f684c3f1334": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:40.535746+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_1c234841-7400-5096-88ae-81b5a4254c58": {
@@ -1433,6 +1498,11 @@
     "evt_1ec2660d-57da-5a8f-8669-d24f2ea6e13d": {
       "line_number": null,
       "processed_at": "2026-05-01T13:00:32.934059+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_1ec2a422-c5e6-59b5-82ec-47b5962ab591": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:36.599471+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_1ecfd30f-22e1-586c-94ed-881a2800a470": {
@@ -1825,6 +1895,11 @@
       "processed_at": "2026-05-01T12:59:30.933005+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_26762d9e-8b4c-5d2f-9cce-ffb798e16ca6": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:28.608977+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_268303d4-c15b-50c4-aba6-d2d7dc1d2c1e": {
       "line_number": null,
       "processed_at": "2026-05-01T16:56:56.651356+00:00",
@@ -1888,6 +1963,11 @@
     "evt_275d905e-01ac-5a94-ab3f-b1f6831fc40e": {
       "line_number": null,
       "processed_at": "2026-05-01T13:41:51.547512+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_27808dcb-53a9-5cd8-ae7e-26d5c95311cb": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:18.598104+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_279ec7f9-1a85-5246-b951-79893501a41d": {
@@ -2060,6 +2140,11 @@
       "processed_at": "2026-05-01T13:08:37.934375+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_2b6d68b6-c30f-5297-b7d7-53978499a5f5": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:30.547503+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_2b7cdbce-e495-5d58-a011-771d244e79ed": {
       "line_number": null,
       "processed_at": "2026-05-01T13:40:50.709744+00:00",
@@ -2210,6 +2295,11 @@
       "processed_at": "2026-05-01T13:07:24.988452+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_2e05d678-f037-5521-9a1e-5408fa4e3cef": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:53:00.502323+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_2e06a6c4-ceb8-5716-95b8-449ab6ef53da": {
       "line_number": null,
       "processed_at": "2026-05-01T13:14:52.985995+00:00",
@@ -2268,6 +2358,11 @@
     "evt_2f4e3e75-7e99-592f-98af-0f61f28b0357": {
       "line_number": null,
       "processed_at": "2026-05-01T13:43:50.652113+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_2fc25d75-087c-5f7d-a2a3-f4d465c46ff8": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:53:05.504933+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_2fd9f294-c73a-5b97-a8cb-f6f79e272c38": {
@@ -2388,6 +2483,11 @@
     "evt_318dd9e6-5152-5d8d-a8f7-ab1766d8b3d2": {
       "line_number": null,
       "processed_at": "2026-05-01T13:02:21.985082+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_31a40871-540a-5b51-bad4-2868dd19c192": {
+      "line_number": null,
+      "processed_at": "2026-05-01T18:10:22.673995+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_31ac57c4-94fc-54a0-9d3d-87cd1b1ca2ee": {
@@ -2675,6 +2775,11 @@
       "processed_at": "2026-05-01T16:52:09.644347+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_36d7a53e-3078-5bb7-b2aa-4e35a19065e7": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:53.548621+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_36dbe5bb-bb68-585c-9ed3-01a011ca950c": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:05.843686+00:00",
@@ -2743,6 +2848,11 @@
     "evt_37da8783-10a4-54fa-8717-b46c7cc18bae": {
       "line_number": null,
       "processed_at": "2026-05-01T16:48:54.651678+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_37dd3f16-db61-58ab-8543-2b30ab5cdfda": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:30.424385+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_37f9c78c-c0c2-5ada-ab04-68900fbffb10": {
@@ -2983,6 +3093,11 @@
     "evt_3c85f4d4-3a3d-5447-95fe-5217503595ad": {
       "line_number": null,
       "processed_at": "2026-05-01T13:04:17.934795+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_3cd12e4b-5d76-5d73-925b-2ab8f348930b": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:20.502982+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_3cd27cdc-587a-5ee3-9448-5d370be75cf6": {
@@ -3573,6 +3688,11 @@
     "evt_46fa3241-fdf3-59e3-a536-382c868ef405": {
       "line_number": null,
       "processed_at": "2026-05-01T16:58:22.033186+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_47144b1a-8e52-5098-87ed-969931376b62": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:24.541740+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_4727fd64-34c2-5d9d-a87c-60993f50c83c": {
@@ -4195,6 +4315,11 @@
       "processed_at": "2026-05-01T13:22:32.002415+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_535f0d55-5631-5dfa-bed4-758613b38a89": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:15.598173+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_536c367d-1d98-5996-bf7a-226f00811e36": {
       "line_number": null,
       "processed_at": "2026-05-01T13:42:30.571919+00:00",
@@ -4203,6 +4328,11 @@
     "evt_538b4b55-5942-581c-a752-22334be901bc": {
       "line_number": null,
       "processed_at": "2026-05-01T13:01:25.937637+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_539e0837-69f4-5e81-a47b-05bb9c0738f1": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:56.552853+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_53a1fd95-10bf-52c7-9db9-81734b17b057": {
@@ -4283,6 +4413,11 @@
     "evt_5469fa8e-b158-5d90-97fd-89d795fb55b2": {
       "line_number": null,
       "processed_at": "2026-05-01T13:08:46.963054+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_546d3ea6-957b-5c1d-9457-b41aa79485dd": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:45.523153+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_547efea5-ddad-5042-81ff-13f053355c7a": {
@@ -4383,6 +4518,11 @@
     "evt_565a5432-ac7e-57cd-bbef-28b08ce22f93": {
       "line_number": null,
       "processed_at": "2026-05-01T13:01:54.949443+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_5661c4af-396d-57a3-861d-eaf68358b0a2": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:31.599317+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_5668bc8e-1660-5d8f-957c-ea0a88ad0fe8": {
@@ -4690,6 +4830,11 @@
       "processed_at": "2026-05-01T13:09:33.951675+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_5bb85c28-80f9-503c-a61f-63a2a42a12ec": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:08.733022+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_5bbf7fc7-3040-5bdc-a097-be59ccf30dfe": {
       "line_number": null,
       "processed_at": "2026-05-01T16:59:14.987549+00:00",
@@ -4708,6 +4853,11 @@
     "evt_5c72b394-334a-5c57-a448-973b379b06e3": {
       "line_number": null,
       "processed_at": "2026-05-01T13:03:49.917151+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_5c83c162-8751-59e2-b30c-327486f43d0e": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:40.641393+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_5c897d39-f466-5853-bda1-5f7aef3b5850": {
@@ -4808,6 +4958,11 @@
     "evt_5edafbc5-b1f0-50cf-bbba-91cee6c15769": {
       "line_number": null,
       "processed_at": "2026-05-01T13:06:15.070190+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_5ee75b24-dcec-5817-96ed-7d1faa512d67": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:53:04.551337+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_5ef9a7d7-cc30-5a0f-acf1-336c21264edc": {
@@ -4930,6 +5085,11 @@
       "processed_at": "2026-05-01T13:45:45.573285+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_61b659a8-a379-53be-aae0-170fd5744251": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:22.503096+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_61b81a72-bb18-50b6-a6f8-002b500773eb": {
       "line_number": null,
       "processed_at": "2026-05-01T13:23:12.969561+00:00",
@@ -4968,6 +5128,11 @@
     "evt_624e1ecb-d0d9-5977-aa71-b8e1fbd63896": {
       "line_number": null,
       "processed_at": "2026-05-01T13:22:26.977737+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_6262bf15-69db-5f36-90a2-8a131afa2299": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:09.566861+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_6285240f-1ae5-538c-b1f1-daff53cbd8b0": {
@@ -5130,6 +5295,11 @@
       "processed_at": "2026-05-01T13:20:44.940786+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_654694a1-1431-51a6-b7ab-314aa7459d4d": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:43.489147+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_654b6f1c-1442-575d-8b61-847aed8f44b6": {
       "line_number": null,
       "processed_at": "2026-05-01T13:06:58.931601+00:00",
@@ -5185,9 +5355,19 @@
       "processed_at": "2026-05-01T13:01:19.939813+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_66c33edd-265a-556c-8e9f-982d1a264313": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:58.512460+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_66da1c2e-4d87-530a-8557-fb3dd0355e7b": {
       "line_number": null,
       "processed_at": "2026-05-01T13:05:14.977081+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_671935f6-0dc1-5d2e-99a6-af161d7a57cf": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:29.668688+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_671b27a3-2b9f-5c20-a066-465d4b258782": {
@@ -5360,6 +5540,11 @@
       "processed_at": "2026-05-01T12:58:33.603657+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_6a768922-4992-5ca4-8df8-e79d5fa31abe": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:29.580142+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_6a78c725-48ea-55a9-9df1-cddce456d74f": {
       "line_number": null,
       "processed_at": "2026-05-01T13:02:15.941521+00:00",
@@ -5415,6 +5600,11 @@
       "processed_at": "2026-05-01T13:16:36.953995+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_6b77f8c6-de99-5cea-a2b1-86c497e0b634": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:53:01.552314+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_6b862840-d2f5-560a-b28a-877791a9a4dd": {
       "line_number": null,
       "processed_at": "2026-05-01T13:09:00.994448+00:00",
@@ -5448,6 +5638,11 @@
     "evt_6bdd03a6-e236-5466-bd22-5b92c3df7d69": {
       "line_number": null,
       "processed_at": "2026-05-01T13:44:30.613574+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_6c43d30c-cc0b-5f18-b797-d9b07c7c9de5": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:27.643312+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_6c56c598-beae-5535-8f52-201847697ed5": {
@@ -5510,6 +5705,11 @@
       "processed_at": "2026-05-01T16:52:11.803155+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_6d3e301c-e51f-58d7-a859-f0fe9ef5b0a6": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:13.560453+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_6d43dcce-89c3-5b2a-94dd-f7fe9c92b38b": {
       "line_number": null,
       "processed_at": "2026-05-01T13:13:58.982894+00:00",
@@ -5528,6 +5728,11 @@
     "evt_6d5fff5a-ada0-55a5-bac3-c89b9a59eef6": {
       "line_number": null,
       "processed_at": "2026-05-01T13:00:18.994070+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_6d6dd7e9-39b6-53db-9c58-d2521695d65e": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:25.628541+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_6d8350b8-c231-5de2-8f02-fb183775deba": {
@@ -5558,6 +5763,11 @@
     "evt_6ddfe95c-7434-55c6-beaf-bf4cff5f8343": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:13.445300+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_6df30a48-f2e8-50f5-9d55-bd4f67686d6b": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:20.605973+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_6dfca499-318b-5561-b846-a8d260126533": {
@@ -5755,6 +5965,11 @@
       "processed_at": "2026-05-01T13:07:32.980962+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_7223b797-1937-527e-9552-ae5d3c6989c3": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:57.514861+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_7286681f-80f3-5b0c-9109-9560d762fa4e": {
       "line_number": null,
       "processed_at": "2026-05-01T17:00:15.079517+00:00",
@@ -5838,6 +6053,11 @@
     "evt_74069de4-8107-5195-934d-9599e7c7bdc4": {
       "line_number": null,
       "processed_at": "2026-05-01T13:19:07.973734+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_741b9ffb-acd3-5599-83c9-9da23f631e6b": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:10.618279+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_74488e1c-ea5d-56ee-9fb4-4f81b8d07a61": {
@@ -6385,6 +6605,11 @@
       "processed_at": "2026-05-01T12:57:36.951229+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_80cb9715-00e9-5185-9126-4f44b67ea4af": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:28.540978+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_80dfd7b0-9cb1-5d9a-882c-d35c12b66384": {
       "line_number": null,
       "processed_at": "2026-05-01T13:46:17.621560+00:00",
@@ -6668,6 +6893,11 @@
     "evt_8687fa29-72a0-59cd-b801-f9b37f3f8412": {
       "line_number": null,
       "processed_at": "2026-05-01T13:09:05.039063+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_86ade2d1-d23f-5a00-8a83-8782f46eb629": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:12.602739+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_86b547e6-100a-52b3-a3bc-277847b37e1c": {
@@ -7155,6 +7385,11 @@
       "processed_at": "2026-05-01T13:14:27.850841+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_8f402bd9-9c4e-52e3-b062-515d14fcfd03": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:32.478964+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_8f4cb407-b339-5f45-9d05-d79f2c4296ed": {
       "line_number": null,
       "processed_at": "2026-05-01T16:49:40.663998+00:00",
@@ -7405,6 +7640,11 @@
       "processed_at": "2026-05-01T13:42:39.524172+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_93c8e1de-2775-5d69-a510-2ec60d8210f5": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:37.644954+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_93e06fa1-f671-5156-92de-a845559733ff": {
       "line_number": null,
       "processed_at": "2026-05-01T13:10:59.067985+00:00",
@@ -7465,6 +7705,11 @@
       "processed_at": "2026-05-01T13:00:50.956265+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_95022b8c-0460-5af9-9d6b-73ec1fb133fd": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:36.484237+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_954f1d07-5021-5ee3-a52a-1d6ea77b1c7a": {
       "line_number": null,
       "processed_at": "2026-05-01T13:46:35.579274+00:00",
@@ -7483,6 +7728,11 @@
     "evt_9595a274-7722-5f6b-b490-b8826fa0ef48": {
       "line_number": null,
       "processed_at": "2026-05-01T13:46:10.612811+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_95abf787-119d-559b-a637-8b2121a2c453": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:07.722713+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_95ed2f84-d56a-5f68-a596-f5c3c98834f9": {
@@ -7655,6 +7905,11 @@
       "processed_at": "2026-05-01T13:12:21.960210+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_99e07ff4-a748-5689-bef7-9dbcad601237": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:19.594519+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_99eb6f3f-0877-53e7-bdc0-09d06b08a99e": {
       "line_number": null,
       "processed_at": "2026-05-01T13:06:18.019268+00:00",
@@ -7795,6 +8050,11 @@
       "processed_at": "2026-05-01T13:13:52.990005+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_9c326fff-6d25-5cfb-a64d-0fce2d7be50f": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:23.645014+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_9c39ee84-2bbb-5d92-8199-9143b0857ceb": {
       "line_number": null,
       "processed_at": "2026-05-01T16:58:32.036166+00:00",
@@ -7878,6 +8138,11 @@
     "evt_9d4f406f-ea3a-520e-80b8-d7da1560b485": {
       "line_number": null,
       "processed_at": "2026-05-01T16:59:13.009976+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_9d5568b0-e219-59e8-aeef-ebd1bf51523b": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:32.601316+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_9d58d502-3dc9-5656-a5af-8c713c8e6e8f": {
@@ -8385,6 +8650,11 @@
       "processed_at": "2026-05-01T13:04:13.198513+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_a75a1054-6417-59fd-9035-f281b2893946": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:21.546210+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_a77525c3-37bb-54d3-9031-3c693748511c": {
       "line_number": null,
       "processed_at": "2026-05-01T13:10:04.966757+00:00",
@@ -8448,6 +8718,11 @@
     "evt_a8f440c3-028e-5646-9070-94de9cefe1f7": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:04.204130+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_a8f752be-b3d9-571a-b15f-2e0ede112a3f": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:34.479742+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_a9089b76-e60b-5ee0-8fba-5a786ec6b347": {
@@ -8558,6 +8833,11 @@
     "evt_ab454a16-a51e-58d4-aa6b-b19c1428d34f": {
       "line_number": null,
       "processed_at": "2026-05-01T13:00:05.053784+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_ab5a04bf-99ad-5418-9bad-ad9ea8e3f0a9": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:44.534787+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_ab5c488f-27e7-5b8b-828a-195d2a28d860": {
@@ -8760,6 +9040,16 @@
       "processed_at": "2026-05-01T13:06:46.995061+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_af526fb2-b5ba-5c67-bb8a-d9116acefa3c": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:33.480671+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_af641fad-4e16-51a6-a664-44d4924f6846": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:25.544357+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_af6ebbfe-05ce-5cad-acf7-da4f1d8dbf1e": {
       "line_number": null,
       "processed_at": "2026-05-01T16:58:26.064718+00:00",
@@ -8818,6 +9108,11 @@
     "evt_b0511b78-54bf-5362-a698-39acebc077b2": {
       "line_number": null,
       "processed_at": "2026-05-01T13:22:54.919964+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_b0960c9b-5898-5341-8918-b1612cfccd72": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:59.507137+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_b0ab4c6f-b0e7-5975-a782-87538adffb42": {
@@ -9230,6 +9525,11 @@
       "processed_at": "2026-05-01T13:46:44.606222+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_b72f3ea5-9b12-58dc-a397-b3f2f08c0158": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:33.597909+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_b73ec72f-92de-584f-b619-036b4a7d7999": {
       "line_number": null,
       "processed_at": "2026-05-01T13:41:04.620376+00:00",
@@ -9318,6 +9618,11 @@
     "evt_b9a3f861-71ff-5aa9-a743-ad9f1852f3cc": {
       "line_number": null,
       "processed_at": "2026-05-01T12:57:22.091890+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_b9c809e9-df85-571b-aaa5-4160d26f1f93": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:47.472511+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_b9cb735c-4ed1-571c-9fbf-38f712a4b807": {
@@ -9413,6 +9718,11 @@
     "evt_bb22144a-391f-5ed7-b0ed-3de874db551a": {
       "line_number": null,
       "processed_at": "2026-05-01T13:44:29.578543+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_bb30f05e-0123-55ed-bc16-13509cc941c8": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:38.478582+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_bb5b6fc8-ad78-5430-9fe3-b94f0333e4b3": {
@@ -9560,6 +9870,11 @@
       "processed_at": "2026-05-01T16:49:07.652896+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_be8043cd-5b5f-52cf-8136-0bee80e9ed55": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:22.610993+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_be873003-9a2d-570f-a67f-3d7ffa1e5e05": {
       "line_number": null,
       "processed_at": "2026-05-01T13:04:26.919154+00:00",
@@ -9618,6 +9933,11 @@
     "evt_bfb529b1-ef2f-5253-9357-647b71d15338": {
       "line_number": null,
       "processed_at": "2026-05-01T13:19:35.935245+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_bfca9803-1cba-505c-af7c-941c300c01c4": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:21.559825+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_bfd62197-2ba1-585d-b35f-65fc93418765": {
@@ -9955,6 +10275,11 @@
       "processed_at": "2026-05-01T12:58:33.926902+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_c6dc01b9-2070-5ea1-8aa6-cbf65ce2b0ef": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:27.596259+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_c6fa037d-c15f-58f0-aad6-4a80f5510567": {
       "line_number": null,
       "processed_at": "2026-05-01T13:22:57.997700+00:00",
@@ -10003,6 +10328,11 @@
     "evt_c7e795eb-c0f1-5288-8ca3-764d653bced8": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:48.464531+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_c8133b9e-06e8-5333-a76e-b5f7ab9a49bc": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:53:02.535610+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_c8346c9b-abcd-548d-b537-f05c37275296": {
@@ -10305,6 +10635,11 @@
       "processed_at": "2026-05-01T13:11:06.985943+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_ce4f704a-18b4-54d5-be45-84dd1ba43293": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:14.611385+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_ce662ad4-2fec-55a0-9f1e-6809a9e32486": {
       "line_number": null,
       "processed_at": "2026-05-01T13:18:07.940833+00:00",
@@ -10395,6 +10730,11 @@
       "processed_at": "2026-05-01T13:01:52.965878+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_cf7d2223-680a-5b20-b2bb-67f12eca7be7": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:38.600406+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_cf83543c-93c9-5fb7-ac0a-7ccf8b6326c3": {
       "line_number": null,
       "processed_at": "2026-05-01T12:58:25.954555+00:00",
@@ -10408,6 +10748,11 @@
     "evt_cf8b94dc-eac8-5e92-9fdf-784f69edade1": {
       "line_number": null,
       "processed_at": "2026-05-01T13:03:22.901184+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_cfa72e0c-0538-534e-a050-da5331717237": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:35.598762+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_cfd733bb-902e-58f7-9826-0b8aa9f18b76": {
@@ -10498,6 +10843,11 @@
     "evt_d11d6b0f-79f5-5e88-9dd0-c27696e18f7e": {
       "line_number": null,
       "processed_at": "2026-05-01T13:45:28.621158+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_d1253de9-5ee3-5477-b902-b6c9fee2f947": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:11.625022+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_d160f8aa-78bf-5a0b-94af-adc5b80f073d": {
@@ -11280,6 +11630,11 @@
       "processed_at": "2026-05-01T12:59:49.957416+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_e115a46e-996f-5d6d-bab2-78bbec49aa92": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:24.645984+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_e12e588a-be0d-58e0-9daf-8ac319f5671f": {
       "line_number": null,
       "processed_at": "2026-05-01T13:02:45.939253+00:00",
@@ -11405,6 +11760,11 @@
       "processed_at": "2026-05-01T13:42:22.563941+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_e3d44aae-bd3b-5289-8365-89436d8b0437": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:39.481056+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_e3ec3cf3-6832-53a6-8df8-bd05b76d00bd": {
       "line_number": null,
       "processed_at": "2026-05-01T13:03:48.946339+00:00",
@@ -11480,6 +11840,11 @@
       "processed_at": "2026-05-01T13:14:25.944186+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_e4d0e71e-a822-55e1-90ae-b07fa6605f80": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:41.625004+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_e4d1dc4e-5fc1-5303-b6ea-e4bb7c2081f2": {
       "line_number": null,
       "processed_at": "2026-05-01T17:00:07.988602+00:00",
@@ -11498,6 +11863,11 @@
     "evt_e5151462-a588-5243-a2fe-8eee98bc5ca6": {
       "line_number": null,
       "processed_at": "2026-05-01T13:44:38.610025+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_e51bbbb3-8f4f-5984-9cf3-c4c49916b344": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:35.437924+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_e537b3de-3006-5ba5-ad64-287ead936d32": {
@@ -11710,6 +12080,11 @@
       "processed_at": "2026-05-01T13:22:55.959150+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_e90f2cc2-8db3-5302-b8f0-043a04e60ab8": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:17.550401+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_e914c2e7-2094-5fd1-846a-4a13b20e50e5": {
       "line_number": null,
       "processed_at": "2026-05-01T16:52:15.626808+00:00",
@@ -11738,6 +12113,11 @@
     "evt_e97df22e-8e67-533c-a26f-ac3ca6f8041d": {
       "line_number": null,
       "processed_at": "2026-05-01T16:53:08.314862+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_e9c7b001-53de-51af-b8fa-cb823253b6b2": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:31.489458+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_ea09291d-943e-5968-ac71-e3312999c6d5": {
@@ -11778,6 +12158,11 @@
     "evt_eaa44926-63ba-5603-9e71-680d0f50b1dc": {
       "line_number": null,
       "processed_at": "2026-05-01T16:48:16.705515+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_eaf745ca-a20e-5032-a0d3-e2c85c039b14": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:19:34.544629+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_eb0d798b-e5b1-51f7-af27-7334959e031a": {
@@ -12285,6 +12670,11 @@
       "processed_at": "2026-05-01T13:41:40.575384+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_f4bf78b4-ecda-595f-aeea-b12e7e4241b2": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:19.476879+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_f4cac46f-0572-5552-b203-fbe3116a9faf": {
       "line_number": null,
       "processed_at": "2026-05-01T16:58:39.035002+00:00",
@@ -12333,6 +12723,11 @@
     "evt_f58dc8d6-55ec-58ed-94bc-0e74f1efdf02": {
       "line_number": null,
       "processed_at": "2026-05-01T13:13:40.986292+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_f59b7406-cd1a-5e15-93e3-791bcafc9d78": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:52:54.537823+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_f5a76929-1586-5cb0-8f63-84d5c2e4e13c": {
@@ -12908,6 +13303,11 @@
     "evt_feb2c9f1-be9d-59fb-86c2-fe5979630955": {
       "line_number": null,
       "processed_at": "2026-05-01T13:41:35.577242+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_febe2ad5-7df1-5a9b-8e69-730d1dc9da5a": {
+      "line_number": null,
+      "processed_at": "2026-05-01T17:36:42.564150+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
     "evt_febeb017-bbc2-547a-83fd-eca2f2fca45a": {
