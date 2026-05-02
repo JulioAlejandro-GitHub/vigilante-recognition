@@ -56,6 +56,7 @@ class PresenceService:
                 decision_reason=decision_reason,
                 payload={
                     "face_detection": serialized_detection,
+                    **self._face_backend_payload(face_detection),
                     **({"semantic_descriptor": semantic_payload} if semantic_payload else {}),
                 },
             )
@@ -68,10 +69,17 @@ class PresenceService:
         )
         payload = {
             "face_detection": serialized_detection,
+            **self._face_backend_payload(face_detection),
             "embedding_backend": embedding_result.backend if embedding_result else settings.embedding_backend,
             "embedding_dimensions": embedding_result.dimensions if embedding_result else 0,
             "identified": False,
         }
+        if embedding_result is not None:
+            payload["embedding_backend_requested"] = embedding_result.embedding_backend_requested
+            payload["embedding_backend_selected"] = embedding_result.embedding_backend_selected
+            payload["embedding_backend_fallback_used"] = embedding_result.embedding_backend_fallback_used
+            payload["embedding_backend_error"] = embedding_result.embedding_backend_error
+            payload["embedding_backend_trace"] = embedding_result.embedding_backend_trace
         if semantic_payload:
             payload["semantic_descriptor"] = semantic_payload
 
@@ -267,6 +275,22 @@ class PresenceService:
             "rejection_reasons": face_detection.rejection_reasons,
             "quality_metrics": face_detection.quality_metrics,
             "frame_quality_metadata": face_detection.frame_quality_metadata,
+            "face_backend": face_detection.face_backend,
+            "face_backend_requested": face_detection.face_backend_requested,
+            "face_backend_selected": face_detection.face_backend_selected,
+            "face_backend_fallback_used": face_detection.face_backend_fallback_used,
+            "face_backend_error": face_detection.face_backend_error,
+            "face_backend_trace": face_detection.face_backend_trace,
+        }
+
+    def _face_backend_payload(self, face_detection: FaceDetectionResult) -> dict[str, object]:
+        return {
+            "face_backend": face_detection.face_backend,
+            "face_backend_requested": face_detection.face_backend_requested,
+            "face_backend_selected": face_detection.face_backend_selected,
+            "face_backend_fallback_used": face_detection.face_backend_fallback_used,
+            "face_backend_error": face_detection.face_backend_error,
+            "face_backend_trace": face_detection.face_backend_trace,
         }
 
     def _serialize_semantic_descriptor(

@@ -74,6 +74,12 @@ class FaceDetectionResult(BaseModel):
     rejection_reasons: list[str] = Field(default_factory=list)
     quality_metrics: dict[str, float] = Field(default_factory=dict)
     frame_quality_metadata: dict[str, float] = Field(default_factory=dict)
+    face_backend: str = "simple"
+    face_backend_requested: str = "simple"
+    face_backend_selected: str = "simple"
+    face_backend_fallback_used: bool = False
+    face_backend_error: Optional[str] = None
+    face_backend_trace: dict[str, Any] = Field(default_factory=dict)
 
 
 class FaceEmbeddingResult(BaseModel):
@@ -84,6 +90,11 @@ class FaceEmbeddingResult(BaseModel):
     bbox: Optional[dict[str, int]] = None
     source_frame_ref: Optional[str] = None
     rejection_reasons: list[str] = Field(default_factory=list)
+    embedding_backend_requested: Optional[str] = None
+    embedding_backend_selected: Optional[str] = None
+    embedding_backend_fallback_used: bool = False
+    embedding_backend_error: Optional[str] = None
+    embedding_backend_trace: dict[str, Any] = Field(default_factory=dict)
 
 
 class SemanticDescriptorResult(BaseModel):

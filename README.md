@@ -4,18 +4,18 @@
 
 `vigilante-recognition` es el subsistema responsable de detectar presencia humana, construir tracks por cámara, evaluar rostro usable, extraer embeddings, correlacionar apariciones y emitir decisiones explicables para seguridad y operación.
 
-## Alcance del Slice 7
+## Alcance del Slice 8
 
-Este slice vuelve operativa la arquitectura semántica enchufable introducida en Slice 6, manteniendo intacto el flujo ya funcional de Slice 1–6.
+Este slice suma el primer backend facial real con InsightFace, manteniendo intacto el flujo ya funcional de Slice 1–7 y el backend simple como fallback.
 
 Su objetivo actual es dejar un bootstrap funcional para:
 
 - consumir `frame.ingested`
 - crear o actualizar `human_track`
 - consolidar presencia humana básica
-- intentar detectar rostro en el frame usando OpenCV
+- intentar detectar rostro en el frame usando backend facial configurable
 - aplicar quality gate de rostro usable
-- generar embedding facial local con backend liviano
+- generar embedding facial con InsightFace o con backend local liviano según configuración/fallback
 - comparar contra galería conocida
 - correlacionar apariciones entre cámaras usando embedding, ventana temporal y cambio de cámara
 - detectar conflicto cuando identidad y continuidad técnica se contradicen
@@ -42,7 +42,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `event_outbox`
   - `cross_camera_correlation`
 
-### Decisión del Slice 7
+### Decisión del Slice 8
 
 - si hay presencia humana confirmada, se detecta un rostro con `quality_score >= 0.75` y el match supera `FACE_MATCH_THRESHOLD` con margen suficiente, el worker emite `face_detected_identified`
 - si hay presencia humana confirmada y se detecta un rostro usable pero sin match confiable, el worker emite `face_detected_unidentified`
@@ -59,7 +59,11 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - la metadata facial y el resumen de matching se guardan dentro de `recognition_event.payload`
 - la continuidad y el estado de resolución se guardan en metadata de `observed_subject` y `human_track`
 - si `recognition.person_profile_projection` y `recognition.person_profile_embedding_projection` no tienen galería compatible disponible, se usa `app/data/dev_known_face_gallery.json` como fallback local de desarrollo
-- el backend actual de embedding es `simple_face_crop_512`, preparado para reemplazarse por un motor real después
+- el backend facial se selecciona con `FACE_BACKEND=simple|insightface|auto`
+- `simple` mantiene OpenCV/Haar y embedding `simple_face_crop_512`
+- `insightface` fuerza InsightFace y falla claramente si no puede cargar o ejecutar
+- `auto` intenta InsightFace y cae a `simple` si InsightFace está deshabilitado, no instalado, no puede cargar modelos o falla en runtime
+- cada evento incluye trazabilidad de backend facial en `payload.face_backend_*`, `payload.face_detection.face_backend_*` y, si hay embedding, `payload.embedding_backend_*`
 - la capa semántica se resuelve por selector de backends:
   - `qwen_vl` para `Qwen/Qwen2.5-VL-3B-Instruct`
   - `smolvlm` para `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
@@ -354,6 +358,48 @@ procesado, recognition lo salta y hace `ack`, sin volver a persistir resultados.
 La continuidad básica entre frames usa el mismo `TrackContinuityService` del
 modo JSONL antes de invocar el pipeline.
 
+### Backend facial InsightFace opcional
+
+El backend facial queda controlado por configuración y por defecto conserva el
+comportamiento anterior:
+
+- `FACE_BACKEND=simple`: usa OpenCV/Haar para detección y `simple_face_crop_512`
+  para embedding. No intenta importar ni cargar InsightFace.
+- `FACE_BACKEND=auto`: intenta InsightFace. Si está deshabilitado, no instalado,
+  no puede cargar modelos/provider o falla en ejecución, registra el motivo y
+  procesa el frame con el backend simple.
+- `FACE_BACKEND=insightface`: fuerza InsightFace. Si no está disponible o falla,
+  el worker levanta error; en RabbitMQ se trata como error transitorio y sigue la
+  política normal de retry/DLQ.
+
+Configuración mínima:
+
+- `INSIGHTFACE_ENABLED=true|false`
+- `INSIGHTFACE_MODEL_NAME=buffalo_l`
+- `INSIGHTFACE_PROVIDER=cpu`
+- `INSIGHTFACE_MODEL_ROOT=` opcional; vacío usa el cache por defecto de InsightFace
+- `INSIGHTFACE_DET_SIZE=640,640`
+
+`INSIGHTFACE_PROVIDER=cpu` usa `CPUExecutionProvider` y `ctx_id=-1`. Se pueden
+probar providers futuros usando nombres de ONNX Runtime, por ejemplo
+`CUDAExecutionProvider,CPUExecutionProvider`, pero el camino soportado por
+defecto en este slice es CPU local.
+
+InsightFace descarga o resuelve sus modelos con su mecanismo estándar. Si
+`INSIGHTFACE_MODEL_ROOT` está definido, esa ruta se usa como raíz/cache local
+reproducible; si está vacío, InsightFace usa su cache por defecto del usuario.
+
+Trazabilidad por evento:
+
+- `payload.face_backend`
+- `payload.face_backend_requested`
+- `payload.face_backend_selected`
+- `payload.face_backend_fallback_used`
+- `payload.face_backend_error`
+- `payload.face_backend_trace`
+- `payload.face_detection.face_backend_*`
+- `payload.embedding_backend_trace` cuando se genera embedding
+
 ### Backend VLM opcional
 
 El worker puede usar un backend VLM real, pero no es obligatorio para tests ni smoke tests.
@@ -410,6 +456,12 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `FACE_QUALITY_THRESHOLD=0.75`
 - `FACE_MATCH_THRESHOLD=0.82`
 - `SECOND_BEST_MARGIN=0.05`
+- `FACE_BACKEND=simple`
+- `INSIGHTFACE_ENABLED=true`
+- `INSIGHTFACE_MODEL_NAME=buffalo_l`
+- `INSIGHTFACE_PROVIDER=cpu`
+- `INSIGHTFACE_MODEL_ROOT=`
+- `INSIGHTFACE_DET_SIZE=640,640`
 - `EMBEDDING_BACKEND=simple_face_crop_512`
 - `CROSS_CAMERA_MATCH_THRESHOLD=0.85`
 - `CROSS_CAMERA_TIME_WINDOW_SECONDS=600`
@@ -441,9 +493,10 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `RABBITMQ_RETRY_LIMIT=3`
 - `RABBITMQ_IDLE_TIMEOUT_SECONDS=1`
 
-## Pendiente después del Slice 7
+## Pendiente después del Slice 8
 
-- reemplazar el backend liviano por un motor facial real como InsightFace
+- poblar galería/proyecciones productivas con embeddings InsightFace
+- evaluar umbrales de calidad y matching específicos de InsightFace con datos reales
 - `candidate_match`
 - correlación cross-camera avanzada
 - optimización de rendimiento VLM real para operación sostenida de producción

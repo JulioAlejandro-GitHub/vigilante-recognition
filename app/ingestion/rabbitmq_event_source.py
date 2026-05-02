@@ -47,26 +47,35 @@ class RabbitMqEventSource:
     def iter_deliveries(self, *, max_messages: int | None = None) -> Iterator[RabbitMqDelivery]:
         channel = self._ensure_channel()
         consumed = 0
-        for method, properties, body in channel.consume(
-            queue=self.topology.recognition_queue,
-            inactivity_timeout=self.idle_timeout_seconds,
-            auto_ack=False,
-        ):
-            if method is None:
-                if max_messages is None:
-                    continue
-                break
-            headers = dict(getattr(properties, "headers", None) or {})
-            yield RabbitMqDelivery(
-                body=body,
-                delivery_tag=method.delivery_tag,
-                headers=headers,
-                redelivered=bool(getattr(method, "redelivered", False)),
-                properties=properties,
+
+        while max_messages is None or consumed < max_messages:
+            for method, properties, body in channel.consume(
+                queue=self.topology.recognition_queue,
+                inactivity_timeout=self.idle_timeout_seconds,
+                auto_ack=False,
+            ):
+                if method is None:
+                    if max_messages is None:
+                        break
+                    return
+                headers = dict(getattr(properties, "headers", None) or {})
+                yield RabbitMqDelivery(
+                    body=body,
+                    delivery_tag=method.delivery_tag,
+                    headers=headers,
+                    redelivered=bool(getattr(method, "redelivered", False)),
+                    properties=properties,
+                )
+                consumed += 1
+                if max_messages is not None and consumed >= max_messages:
+                    return
+            if max_messages is not None:
+                return
+            logger.debug(
+                "rabbitmq_consumer_idle queue=%s inactivity_timeout=%s",
+                self.topology.recognition_queue,
+                self.idle_timeout_seconds,
             )
-            consumed += 1
-            if max_messages is not None and consumed >= max_messages:
-                break
 
     def ack(self, delivery: RabbitMqDelivery) -> None:
         self._ensure_channel().basic_ack(delivery_tag=delivery.delivery_tag)

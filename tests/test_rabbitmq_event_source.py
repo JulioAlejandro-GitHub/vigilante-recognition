@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 from app.ingestion import FileEventDeduper, RejectedEventStore
 from app.ingestion.rabbitmq_event_source import RabbitMqDelivery, RabbitMqEventSource
@@ -216,6 +217,27 @@ def test_rabbitmq_event_source_logs_ready_after_declaring_topology(caplog) -> No
     assert "queue=vigilante.recognition.frame_ingested" in caplog.text
 
 
+def test_rabbitmq_event_source_keeps_waiting_after_idle_timeout() -> None:
+    channel = _IdleThenDeliveryChannel()
+    source = RabbitMqEventSource(
+        host="localhost",
+        port=5672,
+        username="guest",
+        password="guest",
+        virtual_host="/",
+        topology=FrameIngestedTopology(),
+        idle_timeout_seconds=0.01,
+        connection_factory=lambda: _FakeRabbitMqConnection(channel),
+    )
+
+    delivery = next(source.iter_deliveries())
+
+    assert channel.consume_calls == 2
+    assert delivery.delivery_tag == 99
+    assert delivery.body == b'{"ok": true}'
+    assert delivery.headers == {"x-test": "yes"}
+
+
 def _frame(tmp_path: Path) -> Path:
     frame_path = tmp_path / "frame.jpg"
     frame_path.write_bytes(b"\xff\xd8test\xff\xd9")
@@ -346,3 +368,20 @@ class _FakeRabbitMqChannel:
 
     def basic_qos(self, *, prefetch_count: int) -> None:
         self.prefetch_count = prefetch_count
+
+
+class _IdleThenDeliveryChannel(_FakeRabbitMqChannel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.consume_calls = 0
+
+    def consume(self, **kwargs):
+        self.consume_calls += 1
+        if self.consume_calls == 1:
+            yield None, None, None
+            return
+        yield (
+            SimpleNamespace(delivery_tag=99, redelivered=False),
+            SimpleNamespace(headers={"x-test": "yes"}),
+            b'{"ok": true}',
+        )

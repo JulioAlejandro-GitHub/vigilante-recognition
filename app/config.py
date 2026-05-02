@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     face_quality_threshold: float = 0.75
     face_match_threshold: float = 0.82
     second_best_margin: float = 0.05
+    face_backend: str = "simple"
+    insightface_enabled: bool = True
+    insightface_model_name: str = "buffalo_l"
+    insightface_provider: str = "cpu"
+    insightface_model_root: str = ""
+    insightface_det_size: str = "640,640"
     embedding_backend: str = "simple_face_crop_512"
     known_face_gallery_path: str = "app/data/dev_known_face_gallery.json"
     cross_camera_match_threshold: float = 0.85

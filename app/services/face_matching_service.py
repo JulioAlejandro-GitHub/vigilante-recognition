@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Protocol
 
 import numpy as np
 
 from app.config import settings
 from app.domain.entities import FaceEmbeddingResult, FaceMatchCandidate, FaceMatchResult, KnownFaceGalleryEntry
 from app.infra.repository import RecognitionRepository
-from app.services.face_embedding_service import FaceEmbeddingService
+
+
+class FaceEmbeddingGenerator(Protocol):
+    def generate(self, *, frame_ref: str, face_detection=None) -> FaceEmbeddingResult:
+        ...
 
 
 class FaceMatchingService:
-    def __init__(self, *, repo: RecognitionRepository, embedding_service: FaceEmbeddingService) -> None:
+    def __init__(self, *, repo: RecognitionRepository, embedding_service: FaceEmbeddingGenerator) -> None:
         self.repo = repo
         self.embedding_service = embedding_service
         self._local_gallery_cache: dict[str, list[KnownFaceGalleryEntry]] = {}
@@ -23,7 +28,8 @@ class FaceMatchingService:
         *,
         gallery_override_path: str | None = None,
     ) -> FaceMatchResult:
-        strategy = f"cosine_similarity:{settings.embedding_backend}"
+        embedding_backend = embedding_result.backend or settings.embedding_backend
+        strategy = f"cosine_similarity:{embedding_backend}"
         if not embedding_result.generated:
             return FaceMatchResult(
                 matching_strategy=strategy,
@@ -32,7 +38,10 @@ class FaceMatchingService:
                 rejection_reasons=["embedding_not_generated", *embedding_result.rejection_reasons],
             )
 
-        gallery_entries = self._load_gallery(gallery_override_path=gallery_override_path)
+        gallery_entries = self._load_gallery(
+            embedding_backend=embedding_backend,
+            gallery_override_path=gallery_override_path,
+        )
         if not gallery_entries:
             return FaceMatchResult(
                 matching_strategy=strategy,
@@ -98,19 +107,20 @@ class FaceMatchingService:
             rejection_reasons=rejection_reasons,
         )
 
-    def _load_gallery(self, gallery_override_path: str | None = None) -> list[KnownFaceGalleryEntry]:
+    def _load_gallery(self, *, embedding_backend: str, gallery_override_path: str | None = None) -> list[KnownFaceGalleryEntry]:
         if gallery_override_path:
-            return self._load_local_gallery_entries(gallery_override_path)
+            return self._load_local_gallery_entries(gallery_override_path, embedding_backend=embedding_backend)
 
-        db_gallery = self.repo.load_known_face_gallery_entries(embedding_backend=settings.embedding_backend)
+        db_gallery = self.repo.load_known_face_gallery_entries(embedding_backend=embedding_backend)
         if db_gallery:
             return db_gallery
 
-        return self._load_local_gallery_entries(settings.known_face_gallery_path)
+        return self._load_local_gallery_entries(settings.known_face_gallery_path, embedding_backend=embedding_backend)
 
-    def _load_local_gallery_entries(self, gallery_path_value: str) -> list[KnownFaceGalleryEntry]:
-        if gallery_path_value in self._local_gallery_cache:
-            return self._local_gallery_cache[gallery_path_value]
+    def _load_local_gallery_entries(self, gallery_path_value: str, *, embedding_backend: str) -> list[KnownFaceGalleryEntry]:
+        cache_key = f"{embedding_backend}:{gallery_path_value}"
+        if cache_key in self._local_gallery_cache:
+            return self._local_gallery_cache[cache_key]
 
         gallery_path = Path(gallery_path_value)
         if not gallery_path.is_absolute():
@@ -133,10 +143,10 @@ class FaceMatchingService:
                     person_type=raw_entry.get("person_type", "unknown"),
                     risk_level=raw_entry.get("risk_level", "low"),
                     embedding=embedding_result.vector,
-                    embedding_backend=settings.embedding_backend,
+                    embedding_backend=embedding_result.backend,
                     source_image_ref=raw_entry["source_image_ref"],
                     gallery_source="local_dev_fixture",
                 )
             )
-        self._local_gallery_cache[gallery_path_value] = entries
+        self._local_gallery_cache[cache_key] = entries
         return entries

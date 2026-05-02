@@ -29,6 +29,8 @@ from app.runner.process_rabbitmq_frames import (
 from app.services.conflict_resolution_service import ConflictResolutionService
 from app.services.cross_camera_correlation_service import CrossCameraCorrelationService
 from app.services.face_embedding_service import FaceEmbeddingService
+from app.services.face_backend_selector import FaceBackendSelector
+from app.services.face_backend_service import SimpleFaceBackend
 from app.services.face_matching_service import FaceMatchingService
 from app.services.canonical_frame_ref_service import CanonicalFrameRefService
 from app.services.presence_service import PresenceService
@@ -117,8 +119,14 @@ def process_message(message: FrameIngestedMessage) -> dict:
         repo = RecognitionRepository(session)
         track_service = TrackService(repo)
         presence_service = PresenceService()
-        embedding_service = FaceEmbeddingService()
-        matching_service = FaceMatchingService(repo=repo, embedding_service=embedding_service)
+        simple_embedding_service = FaceEmbeddingService()
+        face_backend_service = FaceBackendSelector(
+            simple_backend=SimpleFaceBackend(
+                presence_service=presence_service,
+                embedding_service=simple_embedding_service,
+            )
+        )
+        matching_service = FaceMatchingService(repo=repo, embedding_service=face_backend_service)
         cross_camera_service = CrossCameraCorrelationService(repo=repo)
         conflict_service = ConflictResolutionService()
         semantic_descriptor_service = SemanticDescriptorService()
@@ -130,7 +138,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
 
         subject, track, is_new_appearance = track_service.open_track_from_frame(message)
         track = track_service.confirm_basic_presence(track)
-        face_detection = presence_service.inspect_face(
+        face_detection = face_backend_service.inspect_face(
             frame_ref=processing_frame_ref,
             quality_metadata=message.payload.quality_metadata,
         )
@@ -146,7 +154,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
         continuity_resolution = None
         recurrent_resolution = None
         if face_detection.usable:
-            embedding_result = embedding_service.generate(
+            embedding_result = face_backend_service.generate(
                 frame_ref=processing_frame_ref,
                 face_detection=face_detection,
             )

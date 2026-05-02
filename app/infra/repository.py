@@ -124,6 +124,12 @@ class RecognitionRepository:
             "image_size": face_detection.image_size,
             "rejection_reasons": face_detection.rejection_reasons,
             "quality_metrics": face_detection.quality_metrics,
+            "face_backend": face_detection.face_backend,
+            "face_backend_requested": face_detection.face_backend_requested,
+            "face_backend_selected": face_detection.face_backend_selected,
+            "face_backend_fallback_used": face_detection.face_backend_fallback_used,
+            "face_backend_error": face_detection.face_backend_error,
+            "face_backend_trace": face_detection.face_backend_trace,
         }
 
         if face_detection.usable:
@@ -232,17 +238,24 @@ class RecognitionRepository:
             "camera_id": str(camera_id),
             "frame_ref": frame_ref,
             "face_quality_score": face_detection.quality_score,
+            "face_backend": face_detection.face_backend,
+            "face_backend_requested": face_detection.face_backend_requested,
+            "face_backend_selected": face_detection.face_backend_selected,
+            "face_backend_fallback_used": face_detection.face_backend_fallback_used,
+            "face_backend_error": face_detection.face_backend_error,
         }
         if embedding_result and embedding_result.generated:
             metadata["last_face_embedding"] = embedding_result.vector
             metadata["last_face_embedding_backend"] = embedding_result.backend
             metadata["last_face_embedding_frame_ref"] = frame_ref
+            metadata["last_face_embedding_trace"] = embedding_result.embedding_backend_trace
             best_quality = float(metadata.get("representative_face_quality_score", 0.0))
             if face_detection.quality_score >= best_quality:
                 metadata["representative_face_embedding"] = embedding_result.vector
                 metadata["representative_face_embedding_backend"] = embedding_result.backend
                 metadata["representative_face_quality_score"] = face_detection.quality_score
                 metadata["representative_face_frame_ref"] = frame_ref
+                metadata["representative_face_embedding_trace"] = embedding_result.embedding_backend_trace
 
         if match_result and match_result.identified and match_result.best_match is not None:
             metadata["resolved_identity"] = {
@@ -283,6 +296,8 @@ class RecognitionRepository:
         appearance_summary = dict(subject.appearance_summary or {})
         appearance_summary["last_face_quality_score"] = face_detection.quality_score
         appearance_summary["last_frame_ref"] = frame_ref
+        appearance_summary["face_backend"] = face_detection.face_backend_selected
+        appearance_summary["face_backend_fallback_used"] = face_detection.face_backend_fallback_used
         appearance_summary["embedding_backend"] = embedding_result.backend if embedding_result else appearance_summary.get("embedding_backend")
         if semantic_descriptor_result and semantic_descriptor_result.generated:
             appearance_summary["semantic_descriptor_backend"] = semantic_descriptor_result.backend
