@@ -70,7 +70,13 @@ def test_face_backend_selector_uses_insightface_in_auto_when_available():
     assert detection.face_backend_requested == "auto"
     assert detection.face_backend_selected == "insightface"
     assert detection.face_backend_fallback_used is False
+    assert detection.face_backend_trace["provider"] == "insightface_provider"
+    assert detection.face_backend_trace["detected"] is True
+    assert detection.face_backend_trace["usable"] is True
+    assert detection.face_backend_trace["elapsed_ms"] >= 0.0
     assert embedding.embedding_backend_selected == "insightface"
+    assert embedding.embedding_backend_trace["provider"] == "insightface_provider"
+    assert embedding.embedding_backend_trace["generated"] is True
     assert insightface.inspect_calls == 1
     assert insightface.generate_calls == 1
     assert simple.inspect_calls == 0

@@ -13,20 +13,23 @@ import pytest
 from app.config import settings
 from app.services.face_backend_service import FaceBackendError
 from app.services.insightface_service import InsightFaceService
+from app.services.insightface_runtime_cache import clear_insightface_runtime_cache
 
 
 def test_insightface_service_detects_face_and_generates_embedding_with_fake_runtime(tmp_path, monkeypatch):
+    clear_insightface_runtime_cache()
     calls: dict[str, object] = {}
 
     class FakeFaceAnalysis:
         def __init__(self, **kwargs):
             calls["init_kwargs"] = kwargs
 
-        def prepare(self, *, ctx_id, det_size):
-            calls["prepare"] = {"ctx_id": ctx_id, "det_size": det_size}
+        def prepare(self, *, ctx_id, det_size, det_thresh):
+            calls["prepare"] = {"ctx_id": ctx_id, "det_size": det_size, "det_thresh": det_thresh}
 
-        def get(self, image):
+        def get(self, image, max_num=0):
             assert image.shape[:2] == (120, 160)
+            calls["get"] = {"max_num": max_num}
             return [
                 SimpleNamespace(
                     bbox=np.asarray([30.0, 20.0, 110.0, 100.0], dtype=np.float32),
@@ -57,11 +60,22 @@ def test_insightface_service_detects_face_and_generates_embedding_with_fake_runt
     assert embedding.backend == "insightface:buffalo_l"
     assert embedding.dimensions == 512
     assert len(embedding.vector) == 512
+    assert detection.face_backend_trace["configuration"]["det_size"] == [640, 640]
+    assert detection.face_backend_trace["configuration"]["detection_threshold"] == 0.5
+    assert detection.face_backend_trace["configuration"]["max_faces"] == 1
+    assert detection.face_backend_trace["detect_elapsed_ms"] >= 0.0
+    assert detection.face_backend_trace["faces_detected"] == 1
+    assert detection.face_backend_trace["runtime_reused"] is False
+    assert detection.face_backend_trace["backend_load_ms"] >= 0.0
+    assert embedding.embedding_backend_trace["detect_elapsed_ms"] >= 0.0
     assert calls["init_kwargs"]["providers"] == ["CPUExecutionProvider"]
-    assert calls["prepare"] == {"ctx_id": -1, "det_size": (640, 640)}
+    assert calls["prepare"] == {"ctx_id": -1, "det_size": (640, 640), "det_thresh": 0.5}
+    assert calls["get"] == {"max_num": 1}
 
 
 def test_insightface_service_fails_clearly_when_disabled(tmp_path, monkeypatch):
+    clear_insightface_runtime_cache()
+
     class FakeFaceAnalysis:
         def __init__(self, **kwargs):
             raise AssertionError("InsightFace should not load while disabled")

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from time import perf_counter
 
 import cv2
 import numpy as np
@@ -11,15 +10,11 @@ import numpy as np
 from app.config import settings
 from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult
 from app.services.face_backend_service import FaceBackendError
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class _ProviderConfig:
-    provider_name: str
-    providers: list[str]
-    ctx_id: int
+from app.services.insightface_runtime_cache import (
+    InsightFaceRuntime,
+    build_insightface_runtime_config,
+    get_insightface_runtime,
+)
 
 
 @dataclass(frozen=True)
@@ -32,6 +27,7 @@ class _InsightFaceAnalysis:
     quality_metrics: dict[str, float]
     rejection_reasons: list[str]
     embedding: list[float]
+    trace: dict[str, object] = field(default_factory=dict)
 
 
 class InsightFaceService:
@@ -44,15 +40,19 @@ class InsightFaceService:
         provider: str | None = None,
         model_root: str | None = None,
         det_size: str | None = None,
+        detection_threshold: float | None = None,
+        max_faces: int | None = None,
     ) -> None:
         self.model_name = model_name or settings.insightface_model_name
         self.provider = provider or settings.insightface_provider
         self.model_root = model_root if model_root is not None else settings.insightface_model_root
         self.det_size = det_size or settings.insightface_det_size
+        self.detection_threshold = (
+            settings.insightface_detection_threshold if detection_threshold is None else detection_threshold
+        )
+        self.max_faces = settings.insightface_max_faces if max_faces is None else max_faces
         self.backend_name = f"insightface:{self.model_name}"
         self.provider_name = self.provider
-        self._app: Any | None = None
-        self._provider_config: _ProviderConfig | None = None
         self._analysis_cache: dict[str, _InsightFaceAnalysis] = {}
 
     def inspect_face(
@@ -71,6 +71,7 @@ class InsightFaceService:
             rejection_reasons=analysis.rejection_reasons,
             quality_metrics=analysis.quality_metrics,
             frame_quality_metadata=quality_metadata or {},
+            face_backend_trace=analysis.trace,
         )
 
     def generate(
@@ -79,19 +80,22 @@ class InsightFaceService:
         frame_ref: str,
         face_detection: FaceDetectionResult | None = None,
     ) -> FaceEmbeddingResult:
-        analysis = self._analyze(frame_ref=frame_ref)
         if face_detection is not None and not face_detection.usable:
             return FaceEmbeddingResult(
                 backend=self.backend_name,
                 source_frame_ref=frame_ref,
                 bbox=face_detection.bbox,
                 rejection_reasons=["face_not_usable_for_embedding"],
+                embedding_backend_trace=face_detection.face_backend_trace,
             )
+
+        analysis = self._analyze(frame_ref=frame_ref)
         if not analysis.detected:
             return FaceEmbeddingResult(
                 backend=self.backend_name,
                 source_frame_ref=frame_ref,
                 rejection_reasons=["face_not_detected_for_embedding", *analysis.rejection_reasons],
+                embedding_backend_trace=analysis.trace,
             )
         if not analysis.embedding:
             return FaceEmbeddingResult(
@@ -99,6 +103,7 @@ class InsightFaceService:
                 source_frame_ref=frame_ref,
                 bbox=analysis.bbox,
                 rejection_reasons=["embedding_not_available"],
+                embedding_backend_trace=analysis.trace,
             )
 
         return FaceEmbeddingResult(
@@ -108,6 +113,7 @@ class InsightFaceService:
             vector=analysis.embedding,
             bbox=analysis.bbox,
             source_frame_ref=frame_ref,
+            embedding_backend_trace=analysis.trace,
         )
 
     def _analyze(self, *, frame_ref: str) -> _InsightFaceAnalysis:
@@ -126,6 +132,7 @@ class InsightFaceService:
                 quality_metrics={},
                 rejection_reasons=["frame_ref_not_found"],
                 embedding=[],
+                trace=self._unloaded_trace(reason="frame_ref_not_found"),
             )
             self._analysis_cache[cache_key] = analysis
             return analysis
@@ -141,14 +148,21 @@ class InsightFaceService:
                 quality_metrics={},
                 rejection_reasons=["frame_unreadable"],
                 embedding=[],
+                trace=self._unloaded_trace(reason="frame_unreadable"),
             )
             self._analysis_cache[cache_key] = analysis
             return analysis
 
         image_height, image_width = image.shape[:2]
         image_size = {"width": int(image_width), "height": int(image_height)}
+        runtime_reused = False
+        runtime: InsightFaceRuntime | None = None
+        max_faces = self._max_faces_int()
         try:
-            faces = self._load_app().get(image)
+            runtime, runtime_reused = self._load_runtime()
+            detect_started_at = perf_counter()
+            faces = runtime.app.get(image, max_num=max_faces)
+            detect_elapsed_ms = self._elapsed_ms(detect_started_at)
         except FaceBackendError:
             raise
         except Exception as exc:  # pragma: no cover - depends on optional runtime/provider failures
@@ -158,6 +172,16 @@ class InsightFaceService:
                 stage="detect",
                 details={"error": str(exc)},
             ) from exc
+        faces = self._filter_faces(faces)
+        faces_detected = len(faces)
+        trace = self._runtime_trace(
+            runtime=runtime,
+            runtime_reused=runtime_reused,
+            detect_elapsed_ms=detect_elapsed_ms,
+            faces_detected=faces_detected,
+            selected_face_score=None,
+            max_faces=max_faces,
+        )
 
         if not faces:
             analysis = _InsightFaceAnalysis(
@@ -169,11 +193,13 @@ class InsightFaceService:
                 quality_metrics={},
                 rejection_reasons=["face_not_detected"],
                 embedding=[],
+                trace=trace,
             )
             self._analysis_cache[cache_key] = analysis
             return analysis
 
         face = max(faces, key=lambda candidate: self._face_area(candidate))
+        selected_face_score = round(float(getattr(face, "det_score", 0.0) or 0.0), 4)
         bbox = self._bbox(face, image_width=image_width, image_height=image_height)
         face_crop = self._extract_face_crop(image=image, bbox=bbox)
         quality_metrics = self._compute_quality_metrics(
@@ -202,13 +228,19 @@ class InsightFaceService:
             quality_metrics=quality_metrics,
             rejection_reasons=rejection_reasons,
             embedding=self._embedding(face),
+            trace=self._runtime_trace(
+                runtime=runtime,
+                runtime_reused=runtime_reused,
+                detect_elapsed_ms=detect_elapsed_ms,
+                faces_detected=faces_detected,
+                selected_face_score=selected_face_score,
+                max_faces=max_faces,
+            ),
         )
         self._analysis_cache[cache_key] = analysis
         return analysis
 
-    def _load_app(self):
-        if self._app is not None:
-            return self._app
+    def _load_runtime(self) -> tuple[InsightFaceRuntime, bool]:
         if not settings.insightface_enabled:
             raise FaceBackendError(
                 "insightface_disabled",
@@ -216,121 +248,95 @@ class InsightFaceService:
                 stage="configuration",
             )
 
-        try:
-            from insightface.app import FaceAnalysis
-        except ImportError as exc:
-            raise FaceBackendError(
-                "insightface_not_installed",
-                backend_key=self.backend_key,
-                stage="import",
-            ) from exc
+        runtime_config = build_insightface_runtime_config(
+            model_name=self.model_name,
+            provider=self.provider,
+            model_root=self.model_root,
+            det_size=self.det_size,
+            detection_threshold=self.detection_threshold,
+        )
+        runtime, reused = get_insightface_runtime(runtime_config)
+        self.backend_name = runtime.backend_name
+        self.provider_name = runtime.provider_name
+        return runtime, reused
 
-        provider_config = self._resolve_provider_config()
-        root = self._model_root_path()
-        kwargs: dict[str, object] = {
-            "name": self.model_name,
-            "providers": provider_config.providers,
+    def _filter_faces(self, faces) -> list[object]:
+        threshold = float(self.detection_threshold)
+        return [
+            face
+            for face in list(faces or [])
+            if float(getattr(face, "det_score", 0.0) or 0.0) >= threshold
+        ]
+
+    def _max_faces_int(self) -> int:
+        try:
+            max_faces = int(self.max_faces)
+        except (TypeError, ValueError) as exc:
+            raise FaceBackendError(
+                "insightface_max_faces_invalid",
+                backend_key=self.backend_key,
+                stage="configuration",
+                details={"max_faces": self.max_faces},
+            ) from exc
+        if max_faces < 0:
+            raise FaceBackendError(
+                "insightface_max_faces_invalid",
+                backend_key=self.backend_key,
+                stage="configuration",
+                details={"max_faces": self.max_faces},
+            )
+        return max_faces
+
+    def _runtime_trace(
+        self,
+        *,
+        runtime: InsightFaceRuntime,
+        runtime_reused: bool,
+        detect_elapsed_ms: float,
+        faces_detected: int,
+        selected_face_score: float | None,
+        max_faces: int,
+    ) -> dict[str, object]:
+        configuration = runtime.config.as_trace()
+        configuration["max_faces"] = max_faces
+        return {
+            "backend": self.backend_key,
+            "backend_name": runtime.backend_name,
+            "provider": runtime.provider_name,
+            "configuration": configuration,
+            "runtime_loaded": True,
+            "runtime_reused": runtime_reused,
+            "backend_load_ms": 0.0 if runtime_reused else runtime.load_elapsed_ms,
+            "runtime_load_elapsed_ms": runtime.load_elapsed_ms,
+            "detect_elapsed_ms": detect_elapsed_ms,
+            "faces_detected": faces_detected,
+            "selected_face_score": selected_face_score,
         }
-        if root is not None:
-            kwargs["root"] = str(root)
-        try:
-            app = FaceAnalysis(**kwargs)
-            app.prepare(ctx_id=provider_config.ctx_id, det_size=self._det_size_tuple())
-        except Exception as exc:  # pragma: no cover - depends on optional model/provider state
-            raise FaceBackendError(
-                f"insightface_load_failed:{type(exc).__name__}",
-                backend_key=self.backend_key,
-                stage="load",
-                details={
-                    "error": str(exc),
-                    "model_name": self.model_name,
-                    "provider": provider_config.provider_name,
-                    "providers": provider_config.providers,
-                    "model_root": str(root) if root is not None else None,
-                },
-            ) from exc
 
-        self._app = app
-        self._provider_config = provider_config
-        self.provider_name = provider_config.provider_name
-        logger.info(
-            "insightface_backend_loaded model_name=%s provider=%s providers=%s model_root=%s det_size=%s ctx_id=%s",
-            self.model_name,
-            provider_config.provider_name,
-            ",".join(provider_config.providers),
-            str(root) if root is not None else "<default>",
-            self.det_size,
-            provider_config.ctx_id,
-        )
-        return self._app
+    def _unloaded_trace(self, *, reason: str) -> dict[str, object]:
+        return {
+            "backend": self.backend_key,
+            "backend_name": self.backend_name,
+            "provider": self.provider_name,
+            "configuration": {
+                "model_name": self.model_name,
+                "provider": self.provider,
+                "model_root": self.model_root or None,
+                "det_size": self.det_size,
+                "detection_threshold": self.detection_threshold,
+                "max_faces": self.max_faces,
+            },
+            "runtime_loaded": False,
+            "runtime_reused": False,
+            "backend_load_ms": 0.0,
+            "runtime_load_elapsed_ms": None,
+            "detect_elapsed_ms": 0.0,
+            "faces_detected": 0,
+            "reason": reason,
+        }
 
-    def _resolve_provider_config(self) -> _ProviderConfig:
-        raw_provider = (self.provider or "cpu").strip()
-        normalized = raw_provider.lower()
-        if normalized in {"cpu", "cpu_execution_provider"}:
-            return _ProviderConfig(
-                provider_name="cpu",
-                providers=["CPUExecutionProvider"],
-                ctx_id=-1,
-            )
-        if normalized in {"cuda", "cuda_execution_provider", "gpu"}:
-            return _ProviderConfig(
-                provider_name="cuda",
-                providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-                ctx_id=0,
-            )
-        if "," in raw_provider:
-            providers = [part.strip() for part in raw_provider.split(",") if part.strip()]
-            if not providers:
-                raise FaceBackendError(
-                    "insightface_provider_invalid",
-                    backend_key=self.backend_key,
-                    stage="configuration",
-                )
-            has_cpu_only = providers == ["CPUExecutionProvider"]
-            return _ProviderConfig(
-                provider_name=raw_provider,
-                providers=providers,
-                ctx_id=-1 if has_cpu_only else 0,
-            )
-        if raw_provider.endswith("ExecutionProvider"):
-            return _ProviderConfig(
-                provider_name=raw_provider,
-                providers=[raw_provider],
-                ctx_id=-1 if raw_provider == "CPUExecutionProvider" else 0,
-            )
-        raise FaceBackendError(
-            "insightface_provider_invalid",
-            backend_key=self.backend_key,
-            stage="configuration",
-            details={"provider": raw_provider},
-        )
-
-    def _det_size_tuple(self) -> tuple[int, int]:
-        try:
-            raw_width, raw_height = self.det_size.lower().replace("x", ",").split(",", 1)
-            width = int(raw_width.strip())
-            height = int(raw_height.strip())
-        except (AttributeError, TypeError, ValueError) as exc:
-            raise FaceBackendError(
-                "insightface_det_size_invalid",
-                backend_key=self.backend_key,
-                stage="configuration",
-                details={"det_size": self.det_size},
-            ) from exc
-        if width <= 0 or height <= 0:
-            raise FaceBackendError(
-                "insightface_det_size_invalid",
-                backend_key=self.backend_key,
-                stage="configuration",
-                details={"det_size": self.det_size},
-            )
-        return width, height
-
-    def _model_root_path(self) -> Path | None:
-        if not self.model_root:
-            return None
-        return Path(self.model_root).expanduser()
+    def _elapsed_ms(self, started_at: float) -> float:
+        return round((perf_counter() - started_at) * 1000.0, 2)
 
     def _cache_key(self, frame_ref: str) -> str:
         frame_path = self._resolve_frame_path(frame_ref)

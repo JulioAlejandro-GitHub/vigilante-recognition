@@ -213,13 +213,30 @@ class FaceBackendSelector:
             attempts=attempts,
             elapsed_ms=elapsed_ms,
         )
+        trace = result.face_backend_trace
+        configuration = trace.get("configuration", {}) if isinstance(trace.get("configuration"), dict) else {}
         logger.info(
-            "face_backend_selected stage=detect requested=%s selected=%s fallback_used=%s provider=%s elapsed_ms=%.2f frame_ref=%s",
+            (
+                "face_backend_selected stage=detect requested=%s selected=%s fallback_used=%s "
+                "provider=%s detected=%s usable=%s faces_detected=%s elapsed_ms=%.2f "
+                "detect_elapsed_ms=%s backend_load_ms=%s runtime_reused=%s "
+                "model_name=%s det_size=%s detection_threshold=%s max_faces=%s frame_ref=%s"
+            ),
             requested_backend,
             backend.backend_key,
             fallback_used,
             backend.provider_name,
+            result.detected,
+            result.usable,
+            trace.get("faces_detected"),
             elapsed_ms,
+            trace.get("detect_elapsed_ms"),
+            trace.get("backend_load_ms"),
+            trace.get("runtime_reused"),
+            configuration.get("model_name"),
+            configuration.get("det_size"),
+            configuration.get("detection_threshold"),
+            configuration.get("max_faces"),
             frame_ref,
         )
         return result
@@ -245,6 +262,7 @@ class FaceBackendSelector:
         elapsed_ms = self._elapsed_ms(started_at)
         attempts = list(pre_attempts or [])
         attempts.append(self._success_attempt(backend=backend, stage="embedding", elapsed_ms=elapsed_ms))
+        backend_trace = dict(result.embedding_backend_trace or {})
         result.embedding_backend_requested = requested_backend
         result.embedding_backend_selected = backend.backend_key
         result.embedding_backend_fallback_used = fallback_used
@@ -258,6 +276,9 @@ class FaceBackendSelector:
             "provider": backend.provider_name,
             "elapsed_ms": elapsed_ms,
             "attempts": attempts,
+            "generated": result.generated,
+            "dimensions": result.dimensions,
+            **self._selected_backend_trace_fields(backend_trace),
         }
         logger.info(
             "face_backend_selected stage=embedding requested=%s selected=%s fallback_used=%s provider=%s generated=%s dimensions=%s elapsed_ms=%.2f frame_ref=%s",
@@ -283,6 +304,7 @@ class FaceBackendSelector:
         attempts: list[dict[str, object]],
         elapsed_ms: float,
     ) -> None:
+        backend_trace = dict(result.face_backend_trace or {})
         result.face_backend = backend.backend_key
         result.face_backend_requested = requested_backend
         result.face_backend_selected = backend.backend_key
@@ -297,7 +319,26 @@ class FaceBackendSelector:
             "provider": backend.provider_name,
             "elapsed_ms": elapsed_ms,
             "attempts": attempts,
+            "detected": result.detected,
+            "usable": result.usable,
+            "quality_score": result.quality_score,
+            **self._selected_backend_trace_fields(backend_trace),
         }
+
+    def _selected_backend_trace_fields(self, backend_trace: dict[str, object]) -> dict[str, object]:
+        if not backend_trace:
+            return {}
+        selected_keys = [
+            "configuration",
+            "runtime_loaded",
+            "runtime_reused",
+            "backend_load_ms",
+            "runtime_load_elapsed_ms",
+            "detect_elapsed_ms",
+            "faces_detected",
+            "selected_face_score",
+        ]
+        return {key: backend_trace[key] for key in selected_keys if key in backend_trace}
 
     def _insightface(self) -> FaceBackend:
         if self._insightface_backend is None:

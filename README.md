@@ -63,6 +63,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - `simple` mantiene OpenCV/Haar y embedding `simple_face_crop_512`
 - `insightface` fuerza InsightFace y falla claramente si no puede cargar o ejecutar
 - `auto` intenta InsightFace y cae a `simple` si InsightFace está deshabilitado, no instalado, no puede cargar modelos o falla en runtime
+- InsightFace se carga con cache lazy por proceso y reutiliza la misma instancia preparada mientras no cambie su configuración de carga
 - cada evento incluye trazabilidad de backend facial en `payload.face_backend_*`, `payload.face_detection.face_backend_*` y, si hay embedding, `payload.embedding_backend_*`
 - la capa semántica se resuelve por selector de backends:
   - `qwen_vl` para `Qwen/Qwen2.5-VL-3B-Instruct`
@@ -379,6 +380,8 @@ Configuración mínima:
 - `INSIGHTFACE_PROVIDER=cpu`
 - `INSIGHTFACE_MODEL_ROOT=` opcional; vacío usa el cache por defecto de InsightFace
 - `INSIGHTFACE_DET_SIZE=640,640`
+- `INSIGHTFACE_DETECTION_THRESHOLD=0.5`
+- `INSIGHTFACE_MAX_FACES=1`
 
 `INSIGHTFACE_PROVIDER=cpu` usa `CPUExecutionProvider` y `ctx_id=-1`. Se pueden
 probar providers futuros usando nombres de ONNX Runtime, por ejemplo
@@ -388,6 +391,18 @@ defecto en este slice es CPU local.
 InsightFace descarga o resuelve sus modelos con su mecanismo estándar. Si
 `INSIGHTFACE_MODEL_ROOT` está definido, esa ruta se usa como raíz/cache local
 reproducible; si está vacío, InsightFace usa su cache por defecto del usuario.
+La instancia `FaceAnalysis` se conserva en un cache por proceso usando como clave
+`model_name`, provider, root, `det_size` y `detection_threshold`. Cambios reales
+en esa configuración crean una nueva instancia preparada; frames siguientes con
+la misma configuración reutilizan el runtime y reportan `runtime_reused=true`.
+
+Tuning inicial:
+
+- `INSIGHTFACE_DET_SIZE` define el tamaño de entrada del detector en `prepare()`.
+- `INSIGHTFACE_DETECTION_THRESHOLD` define el `det_thresh` de InsightFace y se
+  vuelve a aplicar al resultado para dejar la decisión trazable.
+- `INSIGHTFACE_MAX_FACES=1` limita el análisis al rostro principal; usa `0` para
+  permitir todos los rostros devueltos por el detector.
 
 Trazabilidad por evento:
 
@@ -399,6 +414,13 @@ Trazabilidad por evento:
 - `payload.face_backend_trace`
 - `payload.face_detection.face_backend_*`
 - `payload.embedding_backend_trace` cuando se genera embedding
+
+`face_backend_trace` incluye, para InsightFace, `configuration`,
+`backend_load_ms`, `runtime_load_elapsed_ms`, `runtime_reused`,
+`detect_elapsed_ms`, `faces_detected` y `selected_face_score`. En logs,
+`insightface_backend_loaded` debe aparecer solo cuando se crea un runtime nuevo;
+los frames normales quedan cubiertos por `face_backend_selected stage=detect`
+con latencias y configuración efectiva.
 
 ### Backend VLM opcional
 
@@ -462,6 +484,8 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `INSIGHTFACE_PROVIDER=cpu`
 - `INSIGHTFACE_MODEL_ROOT=`
 - `INSIGHTFACE_DET_SIZE=640,640`
+- `INSIGHTFACE_DETECTION_THRESHOLD=0.5`
+- `INSIGHTFACE_MAX_FACES=1`
 - `EMBEDDING_BACKEND=simple_face_crop_512`
 - `CROSS_CAMERA_MATCH_THRESHOLD=0.85`
 - `CROSS_CAMERA_TIME_WINDOW_SECONDS=600`
@@ -497,6 +521,7 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 
 - poblar galería/proyecciones productivas con embeddings InsightFace
 - evaluar umbrales de calidad y matching específicos de InsightFace con datos reales
+- iterar `INSIGHTFACE_DET_SIZE`, `INSIGHTFACE_DETECTION_THRESHOLD` y `INSIGHTFACE_MAX_FACES` con muestras reales por cámara
 - `candidate_match`
 - correlación cross-camera avanzada
 - optimización de rendimiento VLM real para operación sostenida de producción
