@@ -27,6 +27,8 @@ class PresenceService:
         *,
         frame_ref: str,
         quality_metadata: dict[str, float] | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceDetectionResult:
         return self.detect_face(frame_ref=frame_ref, quality_metadata=quality_metadata or {})
 

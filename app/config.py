@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     insightface_det_size: str = "640,640"
     insightface_detection_threshold: float = 0.5
     insightface_max_faces: int = 1
+    insightface_min_face_bbox_size: int = 0
+    insightface_min_face_area_ratio: float = 0.0
+    insightface_camera_overrides_json: str = ""
+    insightface_camera_metrics_log_every_n_frames: int = 25
     embedding_backend: str = "simple_face_crop_512"
     known_face_gallery_path: str = "app/data/dev_known_face_gallery.json"
     cross_camera_match_threshold: float = 0.85

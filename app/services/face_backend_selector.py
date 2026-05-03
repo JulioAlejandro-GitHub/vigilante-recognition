@@ -5,6 +5,7 @@ from time import perf_counter
 
 from app.config import Settings, settings
 from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult
+from app.services.camera_face_metrics_service import record_camera_face_detection
 from app.services.face_backend_service import FaceBackend, FaceBackendError, SimpleFaceBackend
 from app.services.insightface_service import InsightFaceService
 
@@ -30,6 +31,8 @@ class FaceBackendSelector:
         *,
         frame_ref: str,
         quality_metadata: dict[str, float] | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceDetectionResult:
         requested_backend = self._requested_backend()
         logger.info(
@@ -43,6 +46,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 quality_metadata=quality_metadata or {},
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
             )
         if requested_backend == "insightface":
             if not self.settings.insightface_enabled:
@@ -58,6 +63,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 quality_metadata=quality_metadata or {},
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
             )
 
         attempts: list[dict[str, object]] = []
@@ -72,6 +79,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 quality_metadata=quality_metadata or {},
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
                 fallback_used=True,
                 error_reason="insightface_disabled",
                 pre_attempts=attempts,
@@ -83,6 +92,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 quality_metadata=quality_metadata or {},
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
             )
         except Exception as exc:
             error = self._coerce_error(exc, backend_key="insightface", stage="detect")
@@ -97,6 +108,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 quality_metadata=quality_metadata or {},
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
                 fallback_used=True,
                 error_reason=error.reason,
                 pre_attempts=attempts,
@@ -107,6 +120,8 @@ class FaceBackendSelector:
         *,
         frame_ref: str,
         face_detection: FaceDetectionResult | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceEmbeddingResult:
         requested_backend = self._requested_backend_from_detection(face_detection)
         selected_detection_backend = self._selected_backend_from_detection(face_detection, requested_backend)
@@ -123,6 +138,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 face_detection=face_detection,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
             )
 
         if requested_backend == "insightface":
@@ -139,6 +156,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 face_detection=face_detection,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
             )
 
         attempts: list[dict[str, object]] = []
@@ -153,6 +172,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 face_detection=face_detection,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
                 fallback_used=True,
                 error_reason="insightface_disabled",
                 pre_attempts=attempts,
@@ -164,6 +185,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 face_detection=face_detection,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
             )
         except Exception as exc:
             error = self._coerce_error(exc, backend_key="insightface", stage="embedding")
@@ -178,6 +201,8 @@ class FaceBackendSelector:
                 requested_backend=requested_backend,
                 frame_ref=frame_ref,
                 face_detection=face_detection,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
                 fallback_used=True,
                 error_reason=error.reason,
                 pre_attempts=attempts,
@@ -190,13 +215,20 @@ class FaceBackendSelector:
         requested_backend: str,
         frame_ref: str,
         quality_metadata: dict[str, float],
+        camera_id: str | None,
+        camera_metadata: dict[str, object] | None,
         fallback_used: bool = False,
         error_reason: str | None = None,
         pre_attempts: list[dict[str, object]] | None = None,
     ) -> FaceDetectionResult:
         started_at = perf_counter()
         try:
-            result = backend.inspect_face(frame_ref=frame_ref, quality_metadata=quality_metadata)
+            result = backend.inspect_face(
+                frame_ref=frame_ref,
+                quality_metadata=quality_metadata,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
+            )
         except Exception as exc:
             error = self._coerce_error(exc, backend_key=backend.backend_key, stage="detect")
             self._log_forced_failure(stage="detect", frame_ref=frame_ref, error=error)
@@ -212,20 +244,25 @@ class FaceBackendSelector:
             error_reason=error_reason,
             attempts=attempts,
             elapsed_ms=elapsed_ms,
+            camera_id=camera_id,
         )
         trace = result.face_backend_trace
         configuration = trace.get("configuration", {}) if isinstance(trace.get("configuration"), dict) else {}
+        if camera_id:
+            record_camera_face_detection(camera_id=camera_id, face_detection=result)
         logger.info(
             (
                 "face_backend_selected stage=detect requested=%s selected=%s fallback_used=%s "
-                "provider=%s detected=%s usable=%s faces_detected=%s elapsed_ms=%.2f "
+                "provider=%s camera_id=%s detected=%s usable=%s faces_detected=%s elapsed_ms=%.2f "
                 "detect_elapsed_ms=%s backend_load_ms=%s runtime_reused=%s "
-                "model_name=%s det_size=%s detection_threshold=%s max_faces=%s frame_ref=%s"
+                "model_name=%s det_size=%s detection_threshold=%s max_faces=%s "
+                "quality_thresholds=%s config_source=%s camera_override_applied=%s frame_ref=%s"
             ),
             requested_backend,
             backend.backend_key,
             fallback_used,
             backend.provider_name,
+            camera_id,
             result.detected,
             result.usable,
             trace.get("faces_detected"),
@@ -237,6 +274,9 @@ class FaceBackendSelector:
             configuration.get("det_size"),
             configuration.get("detection_threshold"),
             configuration.get("max_faces"),
+            configuration.get("quality_thresholds"),
+            configuration.get("config_source"),
+            configuration.get("camera_override_applied"),
             frame_ref,
         )
         return result
@@ -248,13 +288,20 @@ class FaceBackendSelector:
         requested_backend: str,
         frame_ref: str,
         face_detection: FaceDetectionResult | None,
+        camera_id: str | None,
+        camera_metadata: dict[str, object] | None,
         fallback_used: bool = False,
         error_reason: str | None = None,
         pre_attempts: list[dict[str, object]] | None = None,
     ) -> FaceEmbeddingResult:
         started_at = perf_counter()
         try:
-            result = backend.generate(frame_ref=frame_ref, face_detection=face_detection)
+            result = backend.generate(
+                frame_ref=frame_ref,
+                face_detection=face_detection,
+                camera_id=camera_id,
+                camera_metadata=camera_metadata,
+            )
         except Exception as exc:
             error = self._coerce_error(exc, backend_key=backend.backend_key, stage="embedding")
             self._log_forced_failure(stage="embedding", frame_ref=frame_ref, error=error)
@@ -303,6 +350,7 @@ class FaceBackendSelector:
         error_reason: str | None,
         attempts: list[dict[str, object]],
         elapsed_ms: float,
+        camera_id: str | None,
     ) -> None:
         backend_trace = dict(result.face_backend_trace or {})
         result.face_backend = backend.backend_key
@@ -322,6 +370,7 @@ class FaceBackendSelector:
             "detected": result.detected,
             "usable": result.usable,
             "quality_score": result.quality_score,
+            "camera_id": camera_id,
             **self._selected_backend_trace_fields(backend_trace),
         }
 
@@ -337,6 +386,11 @@ class FaceBackendSelector:
             "detect_elapsed_ms",
             "faces_detected",
             "selected_face_score",
+            "camera_id",
+            "config_source",
+            "camera_override_applied",
+            "camera_override_key",
+            "quality_thresholds",
         ]
         return {key: backend_trace[key] for key in selected_keys if key in backend_trace}
 

@@ -33,6 +33,8 @@ class FaceBackend(Protocol):
         *,
         frame_ref: str,
         quality_metadata: dict[str, float] | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceDetectionResult:
         ...
 
@@ -41,6 +43,8 @@ class FaceBackend(Protocol):
         *,
         frame_ref: str,
         face_detection: FaceDetectionResult | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceEmbeddingResult:
         ...
 
@@ -64,10 +68,14 @@ class SimpleFaceBackend:
         *,
         frame_ref: str,
         quality_metadata: dict[str, float] | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceDetectionResult:
         return self.presence_service.inspect_face(
             frame_ref=frame_ref,
             quality_metadata=quality_metadata or {},
+            camera_id=camera_id,
+            camera_metadata=camera_metadata,
         )
 
     def generate(
@@ -75,6 +83,8 @@ class SimpleFaceBackend:
         *,
         frame_ref: str,
         face_detection: FaceDetectionResult | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceEmbeddingResult:
         return self.embedding_service.generate(
             frame_ref=frame_ref,

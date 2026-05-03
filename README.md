@@ -64,6 +64,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - `insightface` fuerza InsightFace y falla claramente si no puede cargar o ejecutar
 - `auto` intenta InsightFace y cae a `simple` si InsightFace está deshabilitado, no instalado, no puede cargar modelos o falla en runtime
 - InsightFace se carga con cache lazy por proceso y reutiliza la misma instancia preparada mientras no cambie su configuración de carga
+- InsightFace soporta tuning explícito por cámara para `det_size`, `detection_threshold`, `max_faces` y thresholds mínimos de calidad sin tocar código
 - cada evento incluye trazabilidad de backend facial en `payload.face_backend_*`, `payload.face_detection.face_backend_*` y, si hay embedding, `payload.embedding_backend_*`
 - la capa semántica se resuelve por selector de backends:
   - `qwen_vl` para `Qwen/Qwen2.5-VL-3B-Instruct`
@@ -382,6 +383,10 @@ Configuración mínima:
 - `INSIGHTFACE_DET_SIZE=640,640`
 - `INSIGHTFACE_DETECTION_THRESHOLD=0.5`
 - `INSIGHTFACE_MAX_FACES=1`
+- `INSIGHTFACE_MIN_FACE_BBOX_SIZE=0`
+- `INSIGHTFACE_MIN_FACE_AREA_RATIO=0.0`
+- `INSIGHTFACE_CAMERA_OVERRIDES_JSON={}`
+- `INSIGHTFACE_CAMERA_METRICS_LOG_EVERY_N_FRAMES=25`
 
 `INSIGHTFACE_PROVIDER=cpu` usa `CPUExecutionProvider` y `ctx_id=-1`. Se pueden
 probar providers futuros usando nombres de ONNX Runtime, por ejemplo
@@ -403,6 +408,52 @@ Tuning inicial:
   vuelve a aplicar al resultado para dejar la decisión trazable.
 - `INSIGHTFACE_MAX_FACES=1` limita el análisis al rostro principal; usa `0` para
   permitir todos los rostros devueltos por el detector.
+- `INSIGHTFACE_MIN_FACE_BBOX_SIZE=0` desactiva el gate mínimo de tamaño de bbox;
+  valores positivos exigen que el menor lado del bbox facial tenga al menos esos
+  pixeles.
+- `INSIGHTFACE_MIN_FACE_AREA_RATIO=0.0` desactiva el gate de área relativa;
+  valores positivos exigen que el área del bbox facial represente al menos esa
+  proporción del frame.
+
+### Calibración por cámara de InsightFace
+
+La precedencia de configuración efectiva es:
+
+1. override por cámara en `frame.ingested.payload.metadata`
+2. override por cámara en `INSIGHTFACE_CAMERA_OVERRIDES_JSON`
+3. configuración global de InsightFace y `FACE_QUALITY_THRESHOLD`
+4. defaults de `app/config.py`
+
+Recognition lee metadata de cámara desde `frame.ingested.payload.metadata` si el
+evento trae alguno de estos objetos:
+
+- `metadata.insightface`
+- `metadata.insightface_tuning`
+- `metadata.face_tuning.insightface`
+- `metadata.face_recognition.insightface`
+- `metadata.camera_face_tuning.insightface`
+
+También se puede configurar por variable de entorno con un mapping por
+`camera_id` canónico:
+
+```bash
+INSIGHTFACE_CAMERA_OVERRIDES_JSON='{
+  "11111111-1111-1111-1111-111111111111": {
+    "det_size": "960,960",
+    "detection_threshold": 0.35,
+    "max_faces": 3,
+    "face_quality_threshold": 0.62,
+    "min_face_bbox_size": 48,
+    "min_face_area_ratio": 0.008
+  }
+}'
+```
+
+Los overrides son explícitos y parciales: cada fuente elegida pisa solo los
+campos que declara y el resto viene de la config global. Si un override de
+cámara es inválido, se ignora, se registra
+`insightface_camera_override_invalid` y el frame usa la config global/default sin
+romper el pipeline.
 
 Trazabilidad por evento:
 
@@ -417,10 +468,22 @@ Trazabilidad por evento:
 
 `face_backend_trace` incluye, para InsightFace, `configuration`,
 `backend_load_ms`, `runtime_load_elapsed_ms`, `runtime_reused`,
-`detect_elapsed_ms`, `faces_detected` y `selected_face_score`. En logs,
+`detect_elapsed_ms`, `faces_detected`, `selected_face_score`, `camera_id`,
+`config_source`, `camera_override_applied` y `quality_thresholds`. Dentro de
+`configuration` quedan la `det_size`, `detection_threshold`, `max_faces`, source
+efectivo y errores de override si existieron. En logs,
 `insightface_backend_loaded` debe aparecer solo cuando se crea un runtime nuevo;
 los frames normales quedan cubiertos por `face_backend_selected stage=detect`
 con latencias y configuración efectiva.
+
+Para calibración operativa local, el worker acumula contadores en memoria por
+cámara y emite `camera_face_metrics_summary` cada
+`INSIGHTFACE_CAMERA_METRICS_LOG_EVERY_N_FRAMES` frames por cámara y al finalizar
+un modo acotado (`--fixture`, JSONL o RabbitMQ con `--rabbitmq-max-messages`).
+El resumen incluye `frames_processed`, `faces_detected`, `face_not_detected`,
+`usable_true`, `usable_false`, `low_quality_face`, `usable_ratio` y latencia
+media de detección. El mismo estado puede consultarse desde Python con
+`app.services.camera_face_metrics_service.get_camera_face_metrics_snapshot()`.
 
 ### Backend VLM opcional
 
@@ -486,6 +549,10 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `INSIGHTFACE_DET_SIZE=640,640`
 - `INSIGHTFACE_DETECTION_THRESHOLD=0.5`
 - `INSIGHTFACE_MAX_FACES=1`
+- `INSIGHTFACE_MIN_FACE_BBOX_SIZE=0`
+- `INSIGHTFACE_MIN_FACE_AREA_RATIO=0.0`
+- `INSIGHTFACE_CAMERA_OVERRIDES_JSON={}`
+- `INSIGHTFACE_CAMERA_METRICS_LOG_EVERY_N_FRAMES=25`
 - `EMBEDDING_BACKEND=simple_face_crop_512`
 - `CROSS_CAMERA_MATCH_THRESHOLD=0.85`
 - `CROSS_CAMERA_TIME_WINDOW_SECONDS=600`
@@ -520,8 +587,9 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 ## Pendiente después del Slice 8
 
 - poblar galería/proyecciones productivas con embeddings InsightFace
-- evaluar umbrales de calidad y matching específicos de InsightFace con datos reales
-- iterar `INSIGHTFACE_DET_SIZE`, `INSIGHTFACE_DETECTION_THRESHOLD` y `INSIGHTFACE_MAX_FACES` con muestras reales por cámara
+- iterar overrides por cámara con muestras reales y comparar `usable_ratio`,
+  `face_not_detected`, `low_quality_face` y latencias
+- evaluar umbrales de matching específicos de InsightFace con datos reales
 - `candidate_match`
 - correlación cross-camera avanzada
 - optimización de rendimiento VLM real para operación sostenida de producción

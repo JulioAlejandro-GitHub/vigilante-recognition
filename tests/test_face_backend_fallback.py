@@ -30,7 +30,14 @@ class _FakeFaceBackend:
         self.inspect_calls = 0
         self.generate_calls = 0
 
-    def inspect_face(self, *, frame_ref: str, quality_metadata: dict[str, float] | None = None) -> FaceDetectionResult:
+    def inspect_face(
+        self,
+        *,
+        frame_ref: str,
+        quality_metadata: dict[str, float] | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
+    ) -> FaceDetectionResult:
         self.inspect_calls += 1
         if self.fail_stage == "detect":
             raise FaceBackendError(self.reason, backend_key=self.backend_key, stage="detect")
@@ -44,7 +51,14 @@ class _FakeFaceBackend:
             frame_quality_metadata=quality_metadata or {},
         )
 
-    def generate(self, *, frame_ref: str, face_detection: FaceDetectionResult | None = None) -> FaceEmbeddingResult:
+    def generate(
+        self,
+        *,
+        frame_ref: str,
+        face_detection: FaceDetectionResult | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
+    ) -> FaceEmbeddingResult:
         self.generate_calls += 1
         if self.fail_stage == "embedding":
             raise FaceBackendError(self.reason, backend_key=self.backend_key, stage="embedding")
@@ -147,6 +161,7 @@ def test_worker_event_contains_face_backend_trace_and_preserves_evidence_refs(mo
     assert event["payload"]["face_backend_fallback_used"] is True
     assert event["payload"]["face_backend_error"] == "insightface_disabled"
     assert event["payload"]["face_detection"]["face_backend_trace"]["attempts"][0]["status"] == "skipped"
+    assert event["payload"]["face_detection"]["face_backend_trace"]["camera_id"] == CAMERA_ID
     assert event["payload"]["evidence_refs"] == ["tests/fixtures/images/face_detectable.jpg"]
     assert event["payload"]["semantic_descriptor"]["source_frame_ref"] == "tests/fixtures/images/face_detectable.jpg"
     assert mock_repo_instance.add_recognition_event.call_args.kwargs["payload"]["evidence_refs"] == [

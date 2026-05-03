@@ -9,6 +9,10 @@ import numpy as np
 
 from app.config import settings
 from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult
+from app.services.camera_face_tuning_service import (
+    CameraFaceTuningService,
+    InsightFaceEffectiveTuning,
+)
 from app.services.face_backend_service import FaceBackendError
 from app.services.insightface_runtime_cache import (
     InsightFaceRuntime,
@@ -42,6 +46,7 @@ class InsightFaceService:
         det_size: str | None = None,
         detection_threshold: float | None = None,
         max_faces: int | None = None,
+        tuning_service: CameraFaceTuningService | None = None,
     ) -> None:
         self.model_name = model_name or settings.insightface_model_name
         self.provider = provider or settings.insightface_provider
@@ -54,14 +59,21 @@ class InsightFaceService:
         self.backend_name = f"insightface:{self.model_name}"
         self.provider_name = self.provider
         self._analysis_cache: dict[str, _InsightFaceAnalysis] = {}
+        self._tuning_service = tuning_service or CameraFaceTuningService()
 
     def inspect_face(
         self,
         *,
         frame_ref: str,
         quality_metadata: dict[str, float] | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceDetectionResult:
-        analysis = self._analyze(frame_ref=frame_ref)
+        analysis = self._analyze(
+            frame_ref=frame_ref,
+            camera_id=camera_id,
+            camera_metadata=camera_metadata,
+        )
         return FaceDetectionResult(
             detected=analysis.detected,
             usable=analysis.usable,
@@ -79,6 +91,8 @@ class InsightFaceService:
         *,
         frame_ref: str,
         face_detection: FaceDetectionResult | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
     ) -> FaceEmbeddingResult:
         if face_detection is not None and not face_detection.usable:
             return FaceEmbeddingResult(
@@ -89,7 +103,11 @@ class InsightFaceService:
                 embedding_backend_trace=face_detection.face_backend_trace,
             )
 
-        analysis = self._analyze(frame_ref=frame_ref)
+        analysis = self._analyze(
+            frame_ref=frame_ref,
+            camera_id=camera_id or self._camera_id_from_detection(face_detection),
+            camera_metadata=camera_metadata,
+        )
         if not analysis.detected:
             return FaceEmbeddingResult(
                 backend=self.backend_name,
@@ -116,8 +134,15 @@ class InsightFaceService:
             embedding_backend_trace=analysis.trace,
         )
 
-    def _analyze(self, *, frame_ref: str) -> _InsightFaceAnalysis:
-        cache_key = self._cache_key(frame_ref)
+    def _analyze(
+        self,
+        *,
+        frame_ref: str,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, object] | None = None,
+    ) -> _InsightFaceAnalysis:
+        tuning = self._resolve_tuning(camera_id=camera_id, camera_metadata=camera_metadata)
+        cache_key = self._cache_key(frame_ref, tuning=tuning)
         if cache_key in self._analysis_cache:
             return self._analysis_cache[cache_key]
 
@@ -132,7 +157,7 @@ class InsightFaceService:
                 quality_metrics={},
                 rejection_reasons=["frame_ref_not_found"],
                 embedding=[],
-                trace=self._unloaded_trace(reason="frame_ref_not_found"),
+                trace=self._unloaded_trace(reason="frame_ref_not_found", tuning=tuning),
             )
             self._analysis_cache[cache_key] = analysis
             return analysis
@@ -148,7 +173,7 @@ class InsightFaceService:
                 quality_metrics={},
                 rejection_reasons=["frame_unreadable"],
                 embedding=[],
-                trace=self._unloaded_trace(reason="frame_unreadable"),
+                trace=self._unloaded_trace(reason="frame_unreadable", tuning=tuning),
             )
             self._analysis_cache[cache_key] = analysis
             return analysis
@@ -157,9 +182,9 @@ class InsightFaceService:
         image_size = {"width": int(image_width), "height": int(image_height)}
         runtime_reused = False
         runtime: InsightFaceRuntime | None = None
-        max_faces = self._max_faces_int()
+        max_faces = self._max_faces_int(tuning.max_faces)
         try:
-            runtime, runtime_reused = self._load_runtime()
+            runtime, runtime_reused = self._load_runtime(tuning=tuning)
             detect_started_at = perf_counter()
             faces = runtime.app.get(image, max_num=max_faces)
             detect_elapsed_ms = self._elapsed_ms(detect_started_at)
@@ -172,7 +197,7 @@ class InsightFaceService:
                 stage="detect",
                 details={"error": str(exc)},
             ) from exc
-        faces = self._filter_faces(faces)
+        faces = self._filter_faces(faces, detection_threshold=tuning.detection_threshold)
         faces_detected = len(faces)
         trace = self._runtime_trace(
             runtime=runtime,
@@ -181,6 +206,7 @@ class InsightFaceService:
             faces_detected=faces_detected,
             selected_face_score=None,
             max_faces=max_faces,
+            tuning=tuning,
         )
 
         if not faces:
@@ -217,8 +243,14 @@ class InsightFaceService:
             + (0.1 * quality_metrics["centered_score"]),
             4,
         )
-        usable = quality_score >= settings.face_quality_threshold
-        rejection_reasons = [] if usable else ["face_quality_threshold_failed"]
+        rejection_reasons = self._quality_rejection_reasons(
+            quality_score=quality_score,
+            bbox=bbox,
+            image_width=image_width,
+            image_height=image_height,
+            tuning=tuning,
+        )
+        usable = not rejection_reasons
         analysis = _InsightFaceAnalysis(
             detected=True,
             usable=usable,
@@ -235,12 +267,13 @@ class InsightFaceService:
                 faces_detected=faces_detected,
                 selected_face_score=selected_face_score,
                 max_faces=max_faces,
+                tuning=tuning,
             ),
         )
         self._analysis_cache[cache_key] = analysis
         return analysis
 
-    def _load_runtime(self) -> tuple[InsightFaceRuntime, bool]:
+    def _load_runtime(self, *, tuning: InsightFaceEffectiveTuning) -> tuple[InsightFaceRuntime, bool]:
         if not settings.insightface_enabled:
             raise FaceBackendError(
                 "insightface_disabled",
@@ -249,41 +282,41 @@ class InsightFaceService:
             )
 
         runtime_config = build_insightface_runtime_config(
-            model_name=self.model_name,
-            provider=self.provider,
-            model_root=self.model_root,
-            det_size=self.det_size,
-            detection_threshold=self.detection_threshold,
+            model_name=tuning.model_name,
+            provider=tuning.provider,
+            model_root=tuning.model_root,
+            det_size=tuning.det_size,
+            detection_threshold=tuning.detection_threshold,
         )
         runtime, reused = get_insightface_runtime(runtime_config)
         self.backend_name = runtime.backend_name
         self.provider_name = runtime.provider_name
         return runtime, reused
 
-    def _filter_faces(self, faces) -> list[object]:
-        threshold = float(self.detection_threshold)
+    def _filter_faces(self, faces, *, detection_threshold: float) -> list[object]:
+        threshold = float(detection_threshold)
         return [
             face
             for face in list(faces or [])
             if float(getattr(face, "det_score", 0.0) or 0.0) >= threshold
         ]
 
-    def _max_faces_int(self) -> int:
+    def _max_faces_int(self, max_faces_value: int) -> int:
         try:
-            max_faces = int(self.max_faces)
+            max_faces = int(max_faces_value)
         except (TypeError, ValueError) as exc:
             raise FaceBackendError(
                 "insightface_max_faces_invalid",
                 backend_key=self.backend_key,
                 stage="configuration",
-                details={"max_faces": self.max_faces},
+                details={"max_faces": max_faces_value},
             ) from exc
         if max_faces < 0:
             raise FaceBackendError(
                 "insightface_max_faces_invalid",
                 backend_key=self.backend_key,
                 stage="configuration",
-                details={"max_faces": self.max_faces},
+                details={"max_faces": max_faces_value},
             )
         return max_faces
 
@@ -296,13 +329,20 @@ class InsightFaceService:
         faces_detected: int,
         selected_face_score: float | None,
         max_faces: int,
+        tuning: InsightFaceEffectiveTuning,
     ) -> dict[str, object]:
         configuration = runtime.config.as_trace()
         configuration["max_faces"] = max_faces
+        configuration.update(tuning.camera_trace())
         return {
             "backend": self.backend_key,
             "backend_name": runtime.backend_name,
             "provider": runtime.provider_name,
+            "camera_id": tuning.camera_id,
+            "config_source": tuning.config_source,
+            "camera_override_applied": tuning.camera_override_applied,
+            "camera_override_key": tuning.camera_override_key,
+            "quality_thresholds": tuning.quality_thresholds_trace(),
             "configuration": configuration,
             "runtime_loaded": True,
             "runtime_reused": runtime_reused,
@@ -313,19 +353,26 @@ class InsightFaceService:
             "selected_face_score": selected_face_score,
         }
 
-    def _unloaded_trace(self, *, reason: str) -> dict[str, object]:
+    def _unloaded_trace(self, *, reason: str, tuning: InsightFaceEffectiveTuning) -> dict[str, object]:
+        configuration = {
+            "model_name": tuning.model_name,
+            "provider": tuning.provider,
+            "model_root": tuning.model_root or None,
+            "det_size": tuning.det_size,
+            "detection_threshold": tuning.detection_threshold,
+            "max_faces": tuning.max_faces,
+            **tuning.camera_trace(),
+        }
         return {
             "backend": self.backend_key,
             "backend_name": self.backend_name,
             "provider": self.provider_name,
-            "configuration": {
-                "model_name": self.model_name,
-                "provider": self.provider,
-                "model_root": self.model_root or None,
-                "det_size": self.det_size,
-                "detection_threshold": self.detection_threshold,
-                "max_faces": self.max_faces,
-            },
+            "camera_id": tuning.camera_id,
+            "config_source": tuning.config_source,
+            "camera_override_applied": tuning.camera_override_applied,
+            "camera_override_key": tuning.camera_override_key,
+            "quality_thresholds": tuning.quality_thresholds_trace(),
+            "configuration": configuration,
             "runtime_loaded": False,
             "runtime_reused": False,
             "backend_load_ms": 0.0,
@@ -338,15 +385,48 @@ class InsightFaceService:
     def _elapsed_ms(self, started_at: float) -> float:
         return round((perf_counter() - started_at) * 1000.0, 2)
 
-    def _cache_key(self, frame_ref: str) -> str:
+    def _resolve_tuning(
+        self,
+        *,
+        camera_id: str | None,
+        camera_metadata: dict[str, object] | None,
+    ) -> InsightFaceEffectiveTuning:
+        defaults = self._tuning_service.build_defaults(
+            model_name=self.model_name,
+            provider=self.provider,
+            model_root=self.model_root,
+            det_size=self.det_size,
+            detection_threshold=self.detection_threshold,
+            max_faces=self.max_faces,
+        )
+        return self._tuning_service.resolve(
+            camera_id=camera_id,
+            defaults=defaults,
+            camera_metadata=camera_metadata,
+        )
+
+    def _camera_id_from_detection(self, face_detection: FaceDetectionResult | None) -> str | None:
+        if face_detection is None:
+            return None
+        trace = face_detection.face_backend_trace or {}
+        camera_id = trace.get("camera_id")
+        if camera_id is not None:
+            return str(camera_id)
+        configuration = trace.get("configuration", {})
+        if isinstance(configuration, dict) and configuration.get("camera_id") is not None:
+            return str(configuration["camera_id"])
+        return None
+
+    def _cache_key(self, frame_ref: str, *, tuning: InsightFaceEffectiveTuning) -> str:
         frame_path = self._resolve_frame_path(frame_ref)
+        tuning_key = repr(tuning.cache_signature())
         if frame_path is None:
-            return frame_ref
+            return f"{frame_ref}:{tuning_key}"
         try:
             stat = frame_path.stat()
         except OSError:
-            return str(frame_path)
-        return f"{frame_path}:{stat.st_mtime_ns}:{stat.st_size}"
+            return f"{frame_path}:{tuning_key}"
+        return f"{frame_path}:{stat.st_mtime_ns}:{stat.st_size}:{tuning_key}"
 
     def _resolve_frame_path(self, frame_ref: str) -> Path | None:
         frame_path = Path(frame_ref)
@@ -421,7 +501,32 @@ class InsightFaceService:
             "brightness_score": round(brightness_score, 4),
             "size_score": round(size_score, 4),
             "centered_score": round(centered_score, 4),
+            "face_area_ratio": round((width * height) / max(1.0, float(image_width * image_height)), 6),
+            "face_min_dimension": float(min(width, height)),
         }
+
+    def _quality_rejection_reasons(
+        self,
+        *,
+        quality_score: float,
+        bbox: dict[str, int],
+        image_width: int,
+        image_height: int,
+        tuning: InsightFaceEffectiveTuning,
+    ) -> list[str]:
+        rejection_reasons: list[str] = []
+        if quality_score < tuning.face_quality_threshold:
+            rejection_reasons.append("face_quality_threshold_failed")
+
+        min_dimension = min(int(bbox["width"]), int(bbox["height"]))
+        if tuning.min_face_bbox_size > 0 and min_dimension < tuning.min_face_bbox_size:
+            rejection_reasons.append("face_bbox_too_small")
+
+        frame_area = max(1.0, float(image_width * image_height))
+        face_area_ratio = (int(bbox["width"]) * int(bbox["height"])) / frame_area
+        if tuning.min_face_area_ratio > 0.0 and face_area_ratio < tuning.min_face_area_ratio:
+            rejection_reasons.append("face_area_ratio_below_threshold")
+        return rejection_reasons
 
     def _embedding(self, face) -> list[float]:
         raw_embedding = getattr(face, "normed_embedding", None)

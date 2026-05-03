@@ -33,6 +33,7 @@ from app.services.face_backend_selector import FaceBackendSelector
 from app.services.face_backend_service import SimpleFaceBackend
 from app.services.face_matching_service import FaceMatchingService
 from app.services.canonical_frame_ref_service import CanonicalFrameRefService
+from app.services.camera_face_metrics_service import log_all_camera_face_metrics
 from app.services.presence_service import PresenceService
 from app.services.recurrent_subject_service import RecurrentSubjectService
 from app.services.semantic_descriptor_service import SemanticDescriptorService
@@ -141,6 +142,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
         face_detection = face_backend_service.inspect_face(
             frame_ref=processing_frame_ref,
             quality_metadata=message.payload.quality_metadata,
+            camera_id=message.camera_id,
+            camera_metadata=message.payload.metadata,
         )
         track_service.register_face_observation(
             track=track,
@@ -157,6 +160,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
             embedding_result = face_backend_service.generate(
                 frame_ref=processing_frame_ref,
                 face_detection=face_detection,
+                camera_id=message.camera_id,
+                camera_metadata=message.payload.metadata,
             )
             match_result = matching_service.match(
                 embedding_result,
@@ -546,6 +551,7 @@ def main() -> None:
         if args.fixture:
             event = process_fixture(args.fixture)
             logger.info("worker_finished event_type=%s track_id=%s", event["event_type"], event["context"]["track_id"])
+            log_all_camera_face_metrics()
             return
 
         if args.ingestion_jsonl:
@@ -587,6 +593,7 @@ def main() -> None:
             result.deduper_path,
             result.rejected_events_path,
         )
+        log_all_camera_face_metrics()
         return
 
     logger.info(
@@ -610,6 +617,7 @@ def main() -> None:
         result.deduper_path,
         result.rejected_events_path,
     )
+    log_all_camera_face_metrics()
 
 
 if __name__ == "__main__":
