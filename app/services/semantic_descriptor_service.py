@@ -16,6 +16,8 @@ from app.services.semantic_backends import (
     SimpleSemanticDescriptorBackend,
     SmolVlmSemanticBackend,
 )
+from app.services.vlm_execution_policy_service import build_vlm_execution_policy_snapshot
+from app.services.vlm_metrics_service import build_success_attempt_metrics
 
 
 class SemanticDescriptorService:
@@ -52,6 +54,7 @@ class SemanticDescriptorService:
         face_detection: FaceDetectionResult | None = None,
         event_type_hint: str | None = None,
     ) -> SemanticDescriptorResult:
+        service_started_at = time.perf_counter()
         frame_path = self._resolve_frame_path(frame_ref)
         published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
         requested_backend = settings.semantic_descriptor_backend
@@ -65,6 +68,7 @@ class SemanticDescriptorService:
             "trace_version": self.TRACE_VERSION,
             "policy_version": self.ACTIVATION_POLICY_VERSION,
             "prompt_policy_version": "forensic_observation_json_v1",
+            "execution_policy": build_vlm_execution_policy_snapshot(),
             "semantic_backend_requested": requested_backend,
             "semantic_backend_normalized": requested_key,
             "semantic_backend_selected": None,
@@ -77,17 +81,22 @@ class SemanticDescriptorService:
             "semantic_backend_event_type_hint": event_type_hint,
             "semantic_backend_enabled_event_types": activation["enabled_event_types"],
             "timeout_seconds": settings.effective_vlm_timeout_seconds,
+            "timeout_applied_seconds": settings.effective_vlm_timeout_seconds,
             "max_new_tokens": settings.vlm_max_new_tokens,
             "max_image_edge": settings.vlm_max_image_edge,
             "requested_device": settings.effective_vlm_device,
+            "serialization_guard_enabled": settings.vlm_serialization_guard_enabled,
             "requested_backend": requested_backend,
             "fallback_enabled": settings.semantic_enable_fallback,
             "selected_backend": None,
             "selected_backend_key": None,
+            "descriptor_valid": False,
+            "total_duration_ms": None,
             "attempts": [],
         }
         if frame_path is None:
             generation_trace["semantic_backend_error"] = "frame_ref_not_found"
+            generation_trace["total_duration_ms"] = self._duration_ms(service_started_at)
             return SemanticDescriptorResult(
                 backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
                 source_frame_ref=published_source_frame_ref,
@@ -112,6 +121,7 @@ class SemanticDescriptorService:
                         "backend_name": backend_key,
                         "status": "skipped",
                         "reason": "backend_not_registered",
+                        "descriptor_valid": False,
                     }
                 )
                 continue
@@ -126,6 +136,7 @@ class SemanticDescriptorService:
                             "status": "skipped",
                             "reason": disabled_reason,
                             "model_name": self._model_name_for(backend_key),
+                            "descriptor_valid": False,
                         }
                     )
                     continue
@@ -139,6 +150,7 @@ class SemanticDescriptorService:
                         "reason": activation["reason"],
                         "model_name": self._model_name_for(backend_key),
                         "event_type_hint": event_type_hint,
+                        "descriptor_valid": False,
                     }
                 )
                 continue
@@ -176,9 +188,16 @@ class SemanticDescriptorService:
                         "backend_name": backend_output.backend_name,
                         "status": "success",
                         "duration_ms": duration_ms,
+                        "timeout_applied_seconds": context.timeout_seconds,
                         "timeout_seconds": context.timeout_seconds,
                         "max_new_tokens": context.max_new_tokens,
                         "max_image_edge": context.max_image_edge,
+                        **build_success_attempt_metrics(
+                            descriptor=descriptor,
+                            signature=signature,
+                            raw_summary=descriptor.get("raw_summary"),
+                            duration_ms=duration_ms,
+                        ),
                     }
                 )
                 fallback_used = self._fallback_used(
@@ -190,6 +209,8 @@ class SemanticDescriptorService:
                 generation_trace["semantic_backend_error"] = self._last_failed_reason(
                     generation_trace["attempts"]
                 )
+                generation_trace["descriptor_valid"] = True
+                generation_trace["total_duration_ms"] = self._duration_ms(service_started_at)
                 descriptor = self._attach_backend_trace(
                     descriptor=descriptor,
                     generation_trace=generation_trace,
@@ -223,6 +244,7 @@ class SemanticDescriptorService:
                         "timeout_applied_seconds": context.timeout_seconds,
                         "max_new_tokens": context.max_new_tokens,
                         "max_image_edge": context.max_image_edge,
+                        "descriptor_valid": False,
                     }
                 )
             except Exception as exc:  # pragma: no cover - defensive path
@@ -237,14 +259,17 @@ class SemanticDescriptorService:
                         "reason": reason,
                         "duration_ms": duration_ms,
                         "timeout_seconds": context.timeout_seconds,
+                        "timeout_applied_seconds": context.timeout_seconds,
                         "max_new_tokens": context.max_new_tokens,
                         "max_image_edge": context.max_image_edge,
+                        "descriptor_valid": False,
                     }
                 )
 
         generation_trace["semantic_backend_error"] = self._last_failed_reason(
             generation_trace["attempts"]
         )
+        generation_trace["total_duration_ms"] = self._duration_ms(service_started_at)
         return SemanticDescriptorResult(
             backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
             source_frame_ref=published_source_frame_ref,

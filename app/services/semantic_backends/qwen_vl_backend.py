@@ -19,4 +19,5 @@ class QwenVLSemanticBackend(TransformersImageTextSemanticBackend):
             runner=runner,
             max_new_tokens=settings.vlm_max_new_tokens,
             max_image_edge=settings.vlm_max_image_edge,
+            serialization_guard_enabled=settings.vlm_serialization_guard_enabled,
         )

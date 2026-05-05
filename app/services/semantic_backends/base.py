@@ -72,6 +72,7 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
         runner: Any | None = None,
         max_new_tokens: int = 256,
         max_image_edge: int = 768,
+        serialization_guard_enabled: bool = True,
     ) -> None:
         self.key = key
         self.backend_name = model_name
@@ -81,6 +82,7 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             device_preference=device_preference,
             max_new_tokens=max_new_tokens,
             max_image_edge=max_image_edge,
+            serialization_guard_enabled=serialization_guard_enabled,
         )
 
     def generate_descriptor(
@@ -100,12 +102,18 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             raise SemanticBackendError(exc.reason, details=exc.details) from exc
 
         raw_text = runtime_result.raw_text
+        response_preview = self._truncate_response(raw_text)
         try:
             parsed = self._extract_json_payload(raw_text)
         except SemanticBackendError as exc:
             raise SemanticBackendError(
                 exc.reason,
-                details={**runtime_result.trace_payload(), **exc.details},
+                details={
+                    **runtime_result.trace_payload(),
+                    "raw_output_chars": len(raw_text),
+                    "raw_output_preview": response_preview,
+                    **exc.details,
+                },
             ) from exc
 
         return SemanticBackendOutput(
@@ -113,11 +121,15 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             descriptor=parsed,
             confidence=self._coerce_confidence(parsed.get("descriptor_confidence")),
             raw_summary=str(parsed.get("raw_summary", "")).strip() or None,
-            raw_response=self._truncate_response(raw_text),
+            raw_response=response_preview,
             trace={
                 "prompt_policy_version": self.prompt_policy_version,
                 "max_new_tokens": context.max_new_tokens,
                 "max_image_edge": context.max_image_edge,
+                "raw_output_chars": len(raw_text),
+                "raw_output_preview_chars": len(response_preview),
+                "parsed_json_keys": sorted(str(key) for key in parsed.keys())[:30],
+                "descriptor_valid": True,
                 **runtime_result.trace_payload(),
             },
         )

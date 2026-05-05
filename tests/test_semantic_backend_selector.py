@@ -109,7 +109,7 @@ def test_auto_selector_falls_back_to_secondary_vlm_when_primary_backend_fails():
         settings,
         "semantic_descriptor_backend",
         "auto",
-    ):
+    ), patch.object(settings, "vlm_auto_preferred_backend", "qwen"):
         descriptor = service.generate(frame_ref=fixture.frame_ref)
 
     assert descriptor.generated is True
@@ -148,7 +148,7 @@ def test_auto_selector_falls_back_to_simple_when_all_real_backends_fail():
         settings,
         "semantic_descriptor_backend",
         "auto",
-    ):
+    ), patch.object(settings, "vlm_auto_preferred_backend", "qwen"):
         descriptor = service.generate(frame_ref=fixture.frame_ref)
 
     assert descriptor.generated is True
@@ -188,7 +188,7 @@ def test_auto_selector_records_timeout_details_and_uses_secondary_vlm():
         settings,
         "semantic_descriptor_backend",
         "auto",
-    ):
+    ), patch.object(settings, "vlm_auto_preferred_backend", "qwen"):
         descriptor = service.generate(frame_ref=fixture.frame_ref)
 
     assert descriptor.generated is True
@@ -293,7 +293,11 @@ def test_vlm_is_skipped_when_event_type_policy_does_not_allow_context():
         settings,
         "semantic_descriptor_backend",
         "auto",
-    ), patch.object(settings, "vlm_enable_for_event_types", "manual_review_required"):
+    ), patch.object(settings, "vlm_auto_preferred_backend", "qwen"), patch.object(
+        settings,
+        "vlm_enable_for_event_types",
+        "manual_review_required",
+    ):
         descriptor = service.generate(
             frame_ref=fixture.frame_ref,
             event_type_hint="human_presence_no_face",

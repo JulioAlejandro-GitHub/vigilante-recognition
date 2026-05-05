@@ -72,11 +72,13 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `simple` para `simple_color_signature_v1`
 - `qwen_vl` se conserva como alias legacy de `qwen`
 - `simple` no intenta VLM; `qwen` y `smolvlm` fuerzan ese backend y caen a `simple` solo si `SEMANTIC_ENABLE_FALLBACK=true`; `auto` intenta el backend preferido y luego el secundario antes de degradar a `simple`
+- la política inicial mantiene `SEMANTIC_DESCRIPTOR_BACKEND=simple` como default global seguro y usa `VLM_AUTO_PREFERRED_BACKEND=qwen` en entorno local acelerado; SmolVLM2 queda como secundario de menor memoria
 - `QWEN_VL_ENABLED=false` y `SMOLVLM_ENABLED=false` mantienen los VLM apagados aunque el backend solicitado sea `qwen`, `smolvlm` o `auto`
 - cuando un VLM está habilitado, el backend real se ejecuta en subprocess aislado para proteger el worker ante timeouts o fallos de carga/inferencia
 - el selector de device soporta `cpu`, `mps`, `cuda` y `auto`, con resolución robusta y trazabilidad en `semantic_descriptor.generation_trace`
 - si el backend principal devuelve salida inválida, hace timeout o falla al cargar/inferir, el worker registra el error y aplica fallback según la cadena configurada
 - cada evento con descriptor incluye `semantic_backend_requested`, `semantic_backend_selected`, `semantic_backend_fallback_used`, `semantic_backend_error` y `semantic_backend_trace`
+- `semantic_backend_trace` registra política efectiva, backend solicitado/seleccionado, fallback, latencia total, timeout aplicado, device, resize de imagen, longitud de salida, validez del descriptor y señales de memoria cuando el runtime puede observarlas
 - `VLM_ENABLE_FOR_EVENT_TYPES` limita cuándo se intenta VLM; el worker pasa `face_detected_unidentified` o `human_presence_no_face` como hint inicial
 
 ### Resolución de cámara en Slice 1
@@ -498,10 +500,11 @@ El worker puede usar un backend VLM real, pero no es obligatorio para tests ni s
 - Para selección automática: `SEMANTIC_DESCRIPTOR_BACKEND=auto`; usa `VLM_AUTO_PREFERRED_BACKEND=qwen|smolvlm`
 - Backend Qwen: `QWEN_MODEL_NAME=Qwen/Qwen2.5-VL-3B-Instruct`
 - Backend SmolVLM2: `SMOLVLM_MODEL_NAME=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
-- Device: `VLM_DEVICE=cpu|mps|cuda|auto`
-- Límite por inferencia: `VLM_TIMEOUT_SECONDS`
-- Límite de salida: `VLM_MAX_NEW_TOKENS`
-- Límite de imagen: `VLM_MAX_IMAGE_EDGE`
+- Device: `VLM_DEVICE=auto|mps|cuda|cpu`
+- Límite por inferencia: `VLM_TIMEOUT_SECONDS=60`
+- Límite de salida inicial: `VLM_MAX_NEW_TOKENS=192`
+- Límite de imagen inicial: `VLM_MAX_IMAGE_EDGE=384`
+- Guard de serialización por proceso/modelo: `VLM_SERIALIZATION_GUARD_ENABLED=true`
 - Activación por contexto: `VLM_ENABLE_FOR_EVENT_TYPES=face_detected_unidentified,human_presence_no_face,manual_review_required,recurrent_unresolved_subject,case_suggestion_created`
 - Fallback automático: `SEMANTIC_ENABLE_FALLBACK=true`
 - Alias legacy soportados: `qwen_vl`, `SEMANTIC_USE_REAL_VLM`, `SEMANTIC_VLM_PRIMARY_MODEL`, `SEMANTIC_VLM_FALLBACK_MODEL`, `SEMANTIC_DEVICE`, `SEMANTIC_TIMEOUT_SECONDS`
@@ -512,21 +515,69 @@ Las dependencias VLM están aisladas para no volver pesada la instalación base:
 pip install -r requirements-vlm.txt
 ```
 
-Validación local explícita del backend real:
+Validación local explícita de cada backend real sobre la imagen fixture:
 
 ```bash
-export SEMANTIC_DESCRIPTOR_BACKEND=qwen
-export QWEN_VL_ENABLED=true
-export SMOLVLM_ENABLED=false
-export SEMANTIC_ENABLE_FALLBACK=true
-export VLM_DEVICE=cpu
-export VLM_TIMEOUT_SECONDS=45
-export VLM_MAX_NEW_TOKENS=256
-export VLM_ENABLE_FOR_EVENT_TYPES=human_presence_no_face,face_detected_unidentified
-PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_no_face.json
+PYTHONPATH=. python scripts/validate_vlm_runtime.py \
+  --backend qwen \
+  --device auto \
+  --timeout 120 \
+  --max-new-tokens 192 \
+  --max-image-edge 384 \
+  --require-real
+
+PYTHONPATH=. python scripts/validate_vlm_runtime.py \
+  --backend smolvlm \
+  --device auto \
+  --timeout 120 \
+  --max-new-tokens 192 \
+  --max-image-edge 384 \
+  --require-real
+```
+
+Comparación básica Qwen vs SmolVLM2:
+
+```bash
+PYTHONPATH=. python scripts/validate_vlm_runtime.py \
+  --backend both \
+  --device auto \
+  --timeout 120 \
+  --max-new-tokens 192 \
+  --max-image-edge 384 \
+  --write-json .runtime/vlm/qwen-smolvlm-comparison.json
+```
+
+Validación en flujo vivo acotado con RabbitMQ:
+
+```bash
+SEMANTIC_DESCRIPTOR_BACKEND=auto \
+QWEN_VL_ENABLED=true \
+SMOLVLM_ENABLED=true \
+SEMANTIC_ENABLE_FALLBACK=true \
+VLM_DEVICE=auto \
+VLM_TIMEOUT_SECONDS=60 \
+VLM_MAX_NEW_TOKENS=192 \
+VLM_MAX_IMAGE_EDGE=384 \
+PYTHONPATH=. python -m app.worker --rabbitmq-consumer --rabbitmq-max-messages 5
 ```
 
 Si `qwen` o `smolvlm` fallan por import, modelo no disponible, timeout, memoria, device/provider, rendering de prompt o runtime, el evento sigue saliendo y el descriptor cae a `simple_color_signature_v1` cuando `SEMANTIC_ENABLE_FALLBACK=true`. En `auto`, la cadena es backend preferido, backend secundario y `simple`.
+
+La traza comparable queda en `payload.semantic_descriptor.semantic_backend_trace` e incluye:
+
+- `semantic_backend_requested`, `semantic_backend_selected`, `semantic_backend_fallback_used`
+- `total_duration_ms`, `duration_ms`, `timeout_applied_seconds`
+- `max_new_tokens`, `max_image_edge`, `requested_device`, `device`, `dtype`
+- `image_original_size`, `image_inference_size`, `image_resized`
+- `raw_output_chars`, `descriptor_output_chars`, `descriptor_valid`
+- `model_load_elapsed_ms`, `runtime_inference_elapsed_ms` y memoria `*_rss_mb`/`*_max_rss_mb` si está disponible
+
+Política operativa inicial:
+
+- `simple` sigue siendo el default global y el único backend recomendado para CI.
+- `qwen` es el primer candidato para flujo local enriquecido en esta máquina MPS y para `auto`.
+- `smolvlm` queda como secundario cuando se quiera reducir memoria máxima o comparar estabilidad; su salida fue más genérica en la validación inicial.
+- `auto` debe quedar con fallback habilitado; si los VLM fallan, el evento conserva `source_frame_ref` canónico y el descriptor simple mantiene compatibilidad con `vigilante-api`, `vigilante-media` y `vigilante-web`.
 
 ## Fixtures incluidos
 
@@ -578,10 +629,11 @@ Si `qwen` o `smolvlm` fallan por import, modelo no disponible, timeout, memoria,
 - `QWEN_MODEL_NAME=Qwen/Qwen2.5-VL-3B-Instruct`
 - `SMOLVLM_MODEL_NAME=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
 - `VLM_AUTO_PREFERRED_BACKEND=qwen`
-- `VLM_DEVICE=cpu`
-- `VLM_TIMEOUT_SECONDS=45`
-- `VLM_MAX_NEW_TOKENS=256`
-- `VLM_MAX_IMAGE_EDGE=768`
+- `VLM_DEVICE=auto`
+- `VLM_TIMEOUT_SECONDS=60`
+- `VLM_MAX_NEW_TOKENS=192`
+- `VLM_MAX_IMAGE_EDGE=384`
+- `VLM_SERIALIZATION_GUARD_ENABLED=true`
 - `VLM_ENABLE_FOR_EVENT_TYPES=face_detected_unidentified,human_presence_no_face,manual_review_required,recurrent_unresolved_subject,case_suggestion_created`
 - `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
 - `RECURRENT_SUBJECT_THRESHOLD=0.78`

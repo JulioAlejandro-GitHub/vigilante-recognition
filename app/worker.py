@@ -37,10 +37,28 @@ from app.services.camera_face_metrics_service import log_all_camera_face_metrics
 from app.services.presence_service import PresenceService
 from app.services.recurrent_subject_service import RecurrentSubjectService
 from app.services.semantic_descriptor_service import SemanticDescriptorService
+from app.services.vlm_execution_policy_service import build_vlm_execution_policy_snapshot
 from app.services.track_service import TrackService
 from app.storage.frame_resolver import FrameResolutionError
 
 logger = logging.getLogger(__name__)
+_SEMANTIC_DESCRIPTOR_SERVICE_CACHE: tuple[tuple[object, ...], SemanticDescriptorService] | None = None
+
+
+def _get_semantic_descriptor_service() -> SemanticDescriptorService:
+    global _SEMANTIC_DESCRIPTOR_SERVICE_CACHE
+    cache_key = (
+        SemanticDescriptorService,
+        settings.effective_qwen_model_name,
+        settings.effective_smolvlm_model_name,
+        settings.effective_vlm_device,
+        settings.vlm_max_new_tokens,
+        settings.vlm_max_image_edge,
+        settings.vlm_serialization_guard_enabled,
+    )
+    if _SEMANTIC_DESCRIPTOR_SERVICE_CACHE is None or _SEMANTIC_DESCRIPTOR_SERVICE_CACHE[0] != cache_key:
+        _SEMANTIC_DESCRIPTOR_SERVICE_CACHE = (cache_key, SemanticDescriptorService())
+    return _SEMANTIC_DESCRIPTOR_SERVICE_CACHE[1]
 
 
 def _safe_generate_semantic_descriptor(
@@ -67,6 +85,7 @@ def _safe_generate_semantic_descriptor(
         )
         generation_trace = {
             "trace_version": "semantic_backend_trace_v1",
+            "execution_policy": build_vlm_execution_policy_snapshot(),
             "semantic_backend_requested": settings.semantic_descriptor_backend,
             "semantic_backend_selected": None,
             "semantic_backend_fallback_used": True,
@@ -74,6 +93,13 @@ def _safe_generate_semantic_descriptor(
             "semantic_backend_event_type_hint": event_type_hint,
             "requested_backend": settings.semantic_descriptor_backend,
             "fallback_enabled": settings.semantic_enable_fallback,
+            "timeout_seconds": settings.effective_vlm_timeout_seconds,
+            "timeout_applied_seconds": settings.effective_vlm_timeout_seconds,
+            "max_new_tokens": settings.vlm_max_new_tokens,
+            "max_image_edge": settings.vlm_max_image_edge,
+            "requested_device": settings.effective_vlm_device,
+            "serialization_guard_enabled": settings.vlm_serialization_guard_enabled,
+            "descriptor_valid": False,
             "selected_backend": None,
             "selected_backend_key": None,
             "attempts": [
@@ -144,7 +170,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
         matching_service = FaceMatchingService(repo=repo, embedding_service=face_backend_service)
         cross_camera_service = CrossCameraCorrelationService(repo=repo)
         conflict_service = ConflictResolutionService()
-        semantic_descriptor_service = SemanticDescriptorService()
+        semantic_descriptor_service = _get_semantic_descriptor_service()
         recurrent_subject_service = RecurrentSubjectService(
             repo=repo,
             semantic_descriptor_service=semantic_descriptor_service,

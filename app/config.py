@@ -60,10 +60,11 @@ class Settings(BaseSettings):
     qwen_model_name: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     smolvlm_model_name: str = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
     vlm_auto_preferred_backend: str = "qwen"
-    vlm_device: str = "cpu"
-    vlm_timeout_seconds: int = 45
-    vlm_max_new_tokens: int = 256
-    vlm_max_image_edge: int = 768
+    vlm_device: str = "auto"
+    vlm_timeout_seconds: int = 60
+    vlm_max_new_tokens: int = 192
+    vlm_max_image_edge: int = 384
+    vlm_serialization_guard_enabled: bool = True
     vlm_enable_for_event_types: str = (
         "face_detected_unidentified,human_presence_no_face,"
         "manual_review_required,recurrent_unresolved_subject,case_suggestion_created"

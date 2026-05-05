@@ -5,13 +5,17 @@ from dataclasses import dataclass, field
 from multiprocessing import get_context
 from multiprocessing.connection import Connection
 from pathlib import Path
+from threading import Lock
+import time
 from typing import Any
 
+from app.config import settings
 from app.services.semantic_backends.device_utils import (
     DeviceSelection,
     resolve_torch_dtype,
     select_device,
 )
+from app.services.vlm_metrics_service import current_memory_snapshot
 
 
 @dataclass
@@ -51,19 +55,61 @@ class ProcessIsolatedTransformersRunner:
         device_preference: str = "auto",
         max_new_tokens: int = 256,
         max_image_edge: int = 768,
+        serialization_guard_enabled: bool | None = None,
     ) -> None:
         self.backend_key = backend_key
         self.model_name = model_name
         self.device_preference = device_preference
         self.max_new_tokens = max_new_tokens
         self.max_image_edge = max_image_edge
+        self.serialization_guard_enabled = (
+            settings.vlm_serialization_guard_enabled
+            if serialization_guard_enabled is None
+            else serialization_guard_enabled
+        )
         self._ctx = get_context("spawn")
         self._parent_conn: Connection | None = None
         self._process = None
         self._request_counter = 0
+        self._generate_lock = Lock()
         atexit.register(self.close)
 
     def generate_text(
+        self,
+        *,
+        image_path: Path,
+        prompt: str,
+        timeout_seconds: int,
+    ) -> VlmRuntimeResult:
+        if not self.serialization_guard_enabled:
+            return self._generate_text_locked(
+                image_path=image_path,
+                prompt=prompt,
+                timeout_seconds=timeout_seconds,
+            )
+
+        acquired = self._generate_lock.acquire(timeout=max(1, int(timeout_seconds or 1)))
+        if not acquired:
+            raise VlmRuntimeError(
+                "backend_serialization_timeout",
+                details={
+                    "backend_key": self.backend_key,
+                    "model_name": self.model_name,
+                    "requested_device": self.device_preference,
+                    "stage": "serialization_guard",
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+        try:
+            return self._generate_text_locked(
+                image_path=image_path,
+                prompt=prompt,
+                timeout_seconds=timeout_seconds,
+            )
+        finally:
+            self._generate_lock.release()
+
+    def _generate_text_locked(
         self,
         *,
         image_path: Path,
@@ -150,9 +196,13 @@ class ProcessIsolatedTransformersRunner:
             dtype_name=str(runtime.get("dtype") or "float32"),
             runtime=str(runtime.get("runtime") or "isolated_subprocess"),
             extra={
-                key: value
-                for key, value in runtime.items()
-                if key not in {"model_name", "device", "requested_device", "dtype", "runtime"}
+                **{
+                    key: value
+                    for key, value in runtime.items()
+                    if key not in {"model_name", "device", "requested_device", "dtype", "runtime"}
+                },
+                "serialization_guard_enabled": self.serialization_guard_enabled,
+                "serialization_guard": "single_inflight_request_per_backend_subprocess",
             },
         )
 
@@ -305,6 +355,8 @@ class _TransformersSession:
         self._processor = None
         self._model = None
         self._last_image_trace: dict[str, Any] = {}
+        self._load_trace: dict[str, Any] = {}
+        self._last_inference_trace: dict[str, Any] = {}
 
     def generate_text(self, *, image_path: Path, prompt: str) -> str:
         self._ensure_loaded()
@@ -313,6 +365,7 @@ class _TransformersSession:
         assert self._model is not None
         assert self._image_module is not None
         assert self._torch is not None
+        self._last_inference_trace = {}
 
         try:
             image = self._image_module.open(image_path).convert("RGB")
@@ -340,6 +393,8 @@ class _TransformersSession:
         except Exception:
             rendered_prompt = prompt
 
+        inference_started_at = time.perf_counter()
+        inference_memory_before = current_memory_snapshot(prefix="runtime_before_inference")
         try:
             try:
                 inputs = self._processor(
@@ -383,6 +438,12 @@ class _TransformersSession:
                     clean_up_tokenization_spaces=True,
                 )
                 raw_text = str(fallback_decoded[0] if fallback_decoded else "").strip()
+            self._last_inference_trace = {
+                "runtime_inference_elapsed_ms": _duration_ms(inference_started_at),
+                "runtime_raw_output_chars": len(raw_text),
+                **inference_memory_before,
+                **current_memory_snapshot(prefix="runtime_after_inference"),
+            }
         except Exception as exc:
             raise VlmRuntimeError(
                 f"model_inference_failed:{type(exc).__name__}",
@@ -403,6 +464,8 @@ class _TransformersSession:
             "max_new_tokens": self.max_new_tokens,
             "max_image_edge": self.max_image_edge,
             **self._last_image_trace,
+            **self._load_trace,
+            **self._last_inference_trace,
         }
 
     def _resize_image_for_inference(self, image: Any) -> Any:
@@ -470,6 +533,8 @@ class _TransformersSession:
                 },
             ) from exc
 
+        load_started_at = time.perf_counter()
+        load_memory_before = current_memory_snapshot(prefix="runtime_before_load")
         try:
             self._processor = AutoProcessor.from_pretrained(self.model_name)
             model_class = self._resolve_model_class(
@@ -491,6 +556,11 @@ class _TransformersSession:
                 )
             self._model = self._model.to(self._selection.resolved)
             self._model.eval()
+            self._load_trace = {
+                "model_load_elapsed_ms": _duration_ms(load_started_at),
+                **load_memory_before,
+                **current_memory_snapshot(prefix="runtime_after_load"),
+            }
         except Exception as exc:
             raise VlmRuntimeError(
                 f"model_load_failed:{type(exc).__name__}",
@@ -538,4 +608,9 @@ class _TransformersSession:
             "dtype": selection.dtype_name if selection else "unknown",
             "stage": stage,
             "exception_type": type(exc).__name__,
+            "exception_message": str(exc)[:500],
         }
+
+
+def _duration_ms(started_at: float) -> int:
+    return int(round((time.perf_counter() - started_at) * 1000))

@@ -27084,6 +27084,11 @@
       "line_number": null,
       "processed_at": "2026-05-02T22:32:38.737794+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
+    "evt_vlm_live_3ca40cce0995449ea2046ae6aff00781": {
+      "line_number": null,
+      "processed_at": "2026-05-05T12:48:39.551080+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     }
   }
 }
