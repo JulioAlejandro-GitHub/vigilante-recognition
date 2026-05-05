@@ -20,8 +20,8 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - correlacionar apariciones entre cámaras usando embedding, ventana temporal y cambio de cámara
 - detectar conflicto cuando identidad y continuidad técnica se contradicen
 - generar descriptor semántico estructurado para sujetos no identificados o sin rostro usable
-- seleccionar backend semántico configurable con backend real canónico `Qwen/Qwen2.5-VL-3B-Instruct`
-- usar fallback `HuggingFaceTB/SmolVLM2-2.2B-Instruct` cuando falle el backend principal
+- seleccionar backend semántico configurable con `SEMANTIC_DESCRIPTOR_BACKEND=simple|qwen|smolvlm|auto`
+- usar Qwen (`Qwen/Qwen2.5-VL-3B-Instruct`) y SmolVLM2 (`HuggingFaceTB/SmolVLM2-2.2B-Instruct`) como enriquecimiento semántico opcional
 - degradar a backend local y determinístico para tests, CI y desarrollo liviano
 - elevar recurrencia de sujetos no resueltos usando similitud semántica, señal visual disponible y proximidad temporal
 - sugerir revisión manual y caso técnico cuando la evidencia acumulada lo justifica
@@ -67,14 +67,17 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - InsightFace soporta tuning explícito por cámara para `det_size`, `detection_threshold`, `max_faces` y thresholds mínimos de calidad sin tocar código
 - cada evento incluye trazabilidad de backend facial en `payload.face_backend_*`, `payload.face_detection.face_backend_*` y, si hay embedding, `payload.embedding_backend_*`
 - la capa semántica se resuelve por selector de backends:
-  - `qwen_vl` para `Qwen/Qwen2.5-VL-3B-Instruct`
+  - `qwen` para `Qwen/Qwen2.5-VL-3B-Instruct`
   - `smolvlm` para `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
   - `simple` para `simple_color_signature_v1`
-- si `SEMANTIC_USE_REAL_VLM=false`, los backends VLM se omiten y el worker cae al backend simple sin romper el flujo
-- si `SEMANTIC_USE_REAL_VLM=true`, el backend real se ejecuta en subprocess aislado para proteger el worker ante timeouts o fallos de carga/inferencia
+- `qwen_vl` se conserva como alias legacy de `qwen`
+- `simple` no intenta VLM; `qwen` y `smolvlm` fuerzan ese backend y caen a `simple` solo si `SEMANTIC_ENABLE_FALLBACK=true`; `auto` intenta el backend preferido y luego el secundario antes de degradar a `simple`
+- `QWEN_VL_ENABLED=false` y `SMOLVLM_ENABLED=false` mantienen los VLM apagados aunque el backend solicitado sea `qwen`, `smolvlm` o `auto`
+- cuando un VLM está habilitado, el backend real se ejecuta en subprocess aislado para proteger el worker ante timeouts o fallos de carga/inferencia
 - el selector de device soporta `cpu`, `mps`, `cuda` y `auto`, con resolución robusta y trazabilidad en `semantic_descriptor.generation_trace`
-- si el backend principal devuelve salida inválida, hace timeout o falla al cargar/inferir, el worker intenta fallback y registra la traza de intentos en `semantic_descriptor.generation_trace`
-- si el fallback también falla, el worker degrada al backend simple sin descargar modelos adicionales
+- si el backend principal devuelve salida inválida, hace timeout o falla al cargar/inferir, el worker registra el error y aplica fallback según la cadena configurada
+- cada evento con descriptor incluye `semantic_backend_requested`, `semantic_backend_selected`, `semantic_backend_fallback_used`, `semantic_backend_error` y `semantic_backend_trace`
+- `VLM_ENABLE_FOR_EVENT_TYPES` limita cuándo se intenta VLM; el worker pasa `face_detected_unidentified` o `human_presence_no_face` como hint inicial
 
 ### Resolución de cámara en Slice 1
 
@@ -489,12 +492,19 @@ media de detección. El mismo estado puede consultarse desde Python con
 
 El worker puede usar un backend VLM real, pero no es obligatorio para tests ni smoke tests.
 
-- Para tests y CI: deja `SEMANTIC_USE_REAL_VLM=false`
-- Para entorno real: configura `SEMANTIC_USE_REAL_VLM=true`
-- Backend canónico: `SEMANTIC_VLM_PRIMARY_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`
-- Fallback: `SEMANTIC_VLM_FALLBACK_MODEL=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
-- Device: `SEMANTIC_DEVICE=auto|cpu|mps|cuda`
+- Para tests, CI y desarrollo liviano: deja `SEMANTIC_DESCRIPTOR_BACKEND=simple`
+- Para Qwen: `SEMANTIC_DESCRIPTOR_BACKEND=qwen` y `QWEN_VL_ENABLED=true`
+- Para SmolVLM2: `SEMANTIC_DESCRIPTOR_BACKEND=smolvlm` y `SMOLVLM_ENABLED=true`
+- Para selección automática: `SEMANTIC_DESCRIPTOR_BACKEND=auto`; usa `VLM_AUTO_PREFERRED_BACKEND=qwen|smolvlm`
+- Backend Qwen: `QWEN_MODEL_NAME=Qwen/Qwen2.5-VL-3B-Instruct`
+- Backend SmolVLM2: `SMOLVLM_MODEL_NAME=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- Device: `VLM_DEVICE=cpu|mps|cuda|auto`
+- Límite por inferencia: `VLM_TIMEOUT_SECONDS`
+- Límite de salida: `VLM_MAX_NEW_TOKENS`
+- Límite de imagen: `VLM_MAX_IMAGE_EDGE`
+- Activación por contexto: `VLM_ENABLE_FOR_EVENT_TYPES=face_detected_unidentified,human_presence_no_face,manual_review_required,recurrent_unresolved_subject,case_suggestion_created`
 - Fallback automático: `SEMANTIC_ENABLE_FALLBACK=true`
+- Alias legacy soportados: `qwen_vl`, `SEMANTIC_USE_REAL_VLM`, `SEMANTIC_VLM_PRIMARY_MODEL`, `SEMANTIC_VLM_FALLBACK_MODEL`, `SEMANTIC_DEVICE`, `SEMANTIC_TIMEOUT_SECONDS`
 
 Las dependencias VLM están aisladas para no volver pesada la instalación base:
 
@@ -505,15 +515,18 @@ pip install -r requirements-vlm.txt
 Validación local explícita del backend real:
 
 ```bash
-export SEMANTIC_USE_REAL_VLM=true
-export SEMANTIC_DESCRIPTOR_BACKEND=qwen_vl
+export SEMANTIC_DESCRIPTOR_BACKEND=qwen
+export QWEN_VL_ENABLED=true
+export SMOLVLM_ENABLED=false
 export SEMANTIC_ENABLE_FALLBACK=true
-export SEMANTIC_DEVICE=auto
-export SEMANTIC_TIMEOUT_SECONDS=45
+export VLM_DEVICE=cpu
+export VLM_TIMEOUT_SECONDS=45
+export VLM_MAX_NEW_TOKENS=256
+export VLM_ENABLE_FOR_EVENT_TYPES=human_presence_no_face,face_detected_unidentified
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_no_face.json
 ```
 
-Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` y luego degrada a `simple`. Para desarrollo liviano y CI, mantén `SEMANTIC_USE_REAL_VLM=false`.
+Si `qwen` o `smolvlm` fallan por import, modelo no disponible, timeout, memoria, device/provider, rendering de prompt o runtime, el evento sigue saliendo y el descriptor cae a `simple_color_signature_v1` cuando `SEMANTIC_ENABLE_FALLBACK=true`. En `auto`, la cadena es backend preferido, backend secundario y `simple`.
 
 ## Fixtures incluidos
 
@@ -558,13 +571,18 @@ Si `qwen_vl` falla por timeout, carga o inferencia, el worker intenta `smolvlm` 
 - `CROSS_CAMERA_TIME_WINDOW_SECONDS=600`
 - `IDENTITY_CONFLICT_MARGIN=0.25`
 - `MANUAL_REVIEW_THRESHOLD=0.35`
-- `SEMANTIC_DESCRIPTOR_BACKEND=qwen_vl`
-- `SEMANTIC_USE_REAL_VLM=false`
-- `SEMANTIC_VLM_PRIMARY_MODEL=Qwen/Qwen2.5-VL-3B-Instruct`
-- `SEMANTIC_VLM_FALLBACK_MODEL=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
-- `SEMANTIC_DEVICE=auto`
-- `SEMANTIC_TIMEOUT_SECONDS=45`
+- `SEMANTIC_DESCRIPTOR_BACKEND=simple`
 - `SEMANTIC_ENABLE_FALLBACK=true`
+- `QWEN_VL_ENABLED=false`
+- `SMOLVLM_ENABLED=false`
+- `QWEN_MODEL_NAME=Qwen/Qwen2.5-VL-3B-Instruct`
+- `SMOLVLM_MODEL_NAME=HuggingFaceTB/SmolVLM2-2.2B-Instruct`
+- `VLM_AUTO_PREFERRED_BACKEND=qwen`
+- `VLM_DEVICE=cpu`
+- `VLM_TIMEOUT_SECONDS=45`
+- `VLM_MAX_NEW_TOKENS=256`
+- `VLM_MAX_IMAGE_EDGE=768`
+- `VLM_ENABLE_FOR_EVENT_TYPES=face_detected_unidentified,human_presence_no_face,manual_review_required,recurrent_unresolved_subject,case_suggestion_created`
 - `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
 - `RECURRENT_SUBJECT_THRESHOLD=0.78`
 - `CASE_SUGGESTION_THRESHOLD=0.9`

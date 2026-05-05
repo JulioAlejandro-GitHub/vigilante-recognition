@@ -28,6 +28,9 @@ class SemanticBackendContext:
     face_detection: FaceDetectionResult | None = None
     requested_backend: str | None = None
     timeout_seconds: int = 45
+    max_new_tokens: int = 256
+    max_image_edge: int = 768
+    event_type_hint: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -58,6 +61,7 @@ class SemanticDescriptorBackend(ABC):
 
 class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
     supports_real_vlm = True
+    prompt_policy_version = "forensic_observation_json_v1"
 
     def __init__(
         self,
@@ -66,7 +70,8 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
         model_name: str,
         device_preference: str = "auto",
         runner: Any | None = None,
-        max_new_tokens: int = 320,
+        max_new_tokens: int = 256,
+        max_image_edge: int = 768,
     ) -> None:
         self.key = key
         self.backend_name = model_name
@@ -75,6 +80,7 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             model_name=model_name,
             device_preference=device_preference,
             max_new_tokens=max_new_tokens,
+            max_image_edge=max_image_edge,
         )
 
     def generate_descriptor(
@@ -108,7 +114,12 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             confidence=self._coerce_confidence(parsed.get("descriptor_confidence")),
             raw_summary=str(parsed.get("raw_summary", "")).strip() or None,
             raw_response=self._truncate_response(raw_text),
-            trace=runtime_result.trace_payload(),
+            trace={
+                "prompt_policy_version": self.prompt_policy_version,
+                "max_new_tokens": context.max_new_tokens,
+                "max_image_edge": context.max_image_edge,
+                **runtime_result.trace_payload(),
+            },
         )
 
     def _build_prompt(self, *, context: SemanticBackendContext) -> str:

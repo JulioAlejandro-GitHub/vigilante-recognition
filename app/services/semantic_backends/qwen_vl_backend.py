@@ -13,8 +13,10 @@ class QwenVLSemanticBackend(TransformersImageTextSemanticBackend):
         runner=None,
     ) -> None:
         super().__init__(
-            key="qwen_vl",
-            model_name=model_name or settings.semantic_vlm_primary_model,
-            device_preference=device_preference or settings.semantic_device,
+            key="qwen",
+            model_name=model_name or settings.effective_qwen_model_name,
+            device_preference=device_preference or settings.effective_vlm_device,
             runner=runner,
+            max_new_tokens=settings.vlm_max_new_tokens,
+            max_image_edge=settings.vlm_max_image_edge,
         )

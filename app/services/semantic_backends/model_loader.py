@@ -49,12 +49,14 @@ class ProcessIsolatedTransformersRunner:
         backend_key: str,
         model_name: str,
         device_preference: str = "auto",
-        max_new_tokens: int = 320,
+        max_new_tokens: int = 256,
+        max_image_edge: int = 768,
     ) -> None:
         self.backend_key = backend_key
         self.model_name = model_name
         self.device_preference = device_preference
         self.max_new_tokens = max_new_tokens
+        self.max_image_edge = max_image_edge
         self._ctx = get_context("spawn")
         self._parent_conn: Connection | None = None
         self._process = None
@@ -185,6 +187,7 @@ class ProcessIsolatedTransformersRunner:
                 "model_name": self.model_name,
                 "device_preference": self.device_preference,
                 "max_new_tokens": self.max_new_tokens,
+                "max_image_edge": self.max_image_edge,
             },
             daemon=True,
         )
@@ -220,12 +223,14 @@ def _transformers_runtime_process(
     model_name: str,
     device_preference: str,
     max_new_tokens: int,
+    max_image_edge: int,
 ) -> None:
     session = _TransformersSession(
         backend_key=backend_key,
         model_name=model_name,
         device_preference=device_preference,
         max_new_tokens=max_new_tokens,
+        max_image_edge=max_image_edge,
     )
     try:
         while True:
@@ -287,16 +292,19 @@ class _TransformersSession:
         model_name: str,
         device_preference: str,
         max_new_tokens: int,
+        max_image_edge: int,
     ) -> None:
         self.backend_key = backend_key
         self.model_name = model_name
         self.device_preference = device_preference
         self.max_new_tokens = max_new_tokens
+        self.max_image_edge = max_image_edge
         self._selection: DeviceSelection | None = None
         self._torch = None
         self._image_module = None
         self._processor = None
         self._model = None
+        self._last_image_trace: dict[str, Any] = {}
 
     def generate_text(self, *, image_path: Path, prompt: str) -> str:
         self._ensure_loaded()
@@ -308,6 +316,7 @@ class _TransformersSession:
 
         try:
             image = self._image_module.open(image_path).convert("RGB")
+            image = self._resize_image_for_inference(image)
         except Exception as exc:
             raise VlmRuntimeError(
                 f"model_inference_failed:{type(exc).__name__}",
@@ -391,7 +400,39 @@ class _TransformersSession:
             "device": self._selection.resolved,
             "dtype": self._selection.dtype_name,
             "runtime": "isolated_subprocess",
+            "max_new_tokens": self.max_new_tokens,
+            "max_image_edge": self.max_image_edge,
+            **self._last_image_trace,
         }
+
+    def _resize_image_for_inference(self, image: Any) -> Any:
+        width, height = image.size
+        self._last_image_trace = {
+            "image_original_size": {"width": int(width), "height": int(height)},
+            "image_inference_size": {"width": int(width), "height": int(height)},
+            "image_resized": False,
+        }
+        max_edge = max(0, int(self.max_image_edge or 0))
+        if max_edge <= 0 or max(width, height) <= max_edge:
+            return image
+
+        scale = max_edge / float(max(width, height))
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        resampling = getattr(getattr(self._image_module, "Resampling", None), "LANCZOS", None)
+        if resampling is None:
+            resampling = getattr(self._image_module, "LANCZOS", 1)
+        resized = image.resize((resized_width, resized_height), resampling)
+        self._last_image_trace.update(
+            {
+                "image_inference_size": {
+                    "width": int(resized_width),
+                    "height": int(resized_height),
+                },
+                "image_resized": True,
+            }
+        )
+        return resized
 
     def _ensure_loaded(self) -> None:
         if self._processor is not None and self._model is not None and self._selection is not None:
@@ -472,7 +513,7 @@ class _TransformersSession:
         return moved
 
     def _resolve_model_class(self, *, auto_model_class: Any) -> Any:
-        if self.backend_key != "qwen_vl":
+        if self.backend_key not in {"qwen", "qwen_vl"}:
             return auto_model_class
 
         try:

@@ -49,6 +49,7 @@ def _safe_generate_semantic_descriptor(
     frame_ref: str,
     source_frame_ref: str | None = None,
     face_detection,
+    event_type_hint: str | None = None,
 ) -> SemanticDescriptorResult:
     published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
     try:
@@ -56,6 +57,7 @@ def _safe_generate_semantic_descriptor(
             frame_ref=frame_ref,
             source_frame_ref=published_source_frame_ref,
             face_detection=face_detection,
+            event_type_hint=event_type_hint,
         )
     except Exception as exc:  # pragma: no cover - defensive path
         logger.exception(
@@ -63,26 +65,38 @@ def _safe_generate_semantic_descriptor(
             frame_ref,
             type(exc).__name__,
         )
+        generation_trace = {
+            "trace_version": "semantic_backend_trace_v1",
+            "semantic_backend_requested": settings.semantic_descriptor_backend,
+            "semantic_backend_selected": None,
+            "semantic_backend_fallback_used": True,
+            "semantic_backend_error": f"unexpected_service_error:{type(exc).__name__}",
+            "semantic_backend_event_type_hint": event_type_hint,
+            "requested_backend": settings.semantic_descriptor_backend,
+            "fallback_enabled": settings.semantic_enable_fallback,
+            "selected_backend": None,
+            "selected_backend_key": None,
+            "attempts": [
+                {
+                    "backend_key": "service",
+                    "backend_name": "semantic_descriptor_service",
+                    "status": "failed",
+                    "reason": f"unexpected_service_error:{type(exc).__name__}",
+                }
+            ],
+        }
         return SemanticDescriptorResult(
             backend="simple_color_signature_v1",
             source_frame_ref=published_source_frame_ref,
             rejection_reasons=["semantic_descriptor_generation_unexpected_failure"],
             descriptor={
                 "source_frame_ref": published_source_frame_ref,
-                "generation_trace": {
-                    "requested_backend": settings.semantic_descriptor_backend,
-                    "fallback_enabled": settings.semantic_enable_fallback,
-                    "selected_backend": None,
-                    "selected_backend_key": None,
-                    "attempts": [
-                        {
-                            "backend_key": "service",
-                            "backend_name": "semantic_descriptor_service",
-                            "status": "failed",
-                            "reason": f"unexpected_service_error:{type(exc).__name__}",
-                        }
-                    ],
-                }
+                "semantic_backend_trace": generation_trace,
+                "generation_trace": generation_trace,
+                "semantic_backend_requested": settings.semantic_descriptor_backend,
+                "semantic_backend_selected": None,
+                "semantic_backend_fallback_used": True,
+                "semantic_backend_error": f"unexpected_service_error:{type(exc).__name__}",
             },
         )
 
@@ -178,6 +192,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                     frame_ref=processing_frame_ref,
                     source_frame_ref=semantic_source_frame_ref,
                     face_detection=face_detection,
+                    event_type_hint="face_detected_unidentified",
                 )
                 semantic_descriptor_result = frame_ref_service.canonicalize_semantic_descriptor(
                     semantic_descriptor_result,
@@ -293,6 +308,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                 frame_ref=processing_frame_ref,
                 source_frame_ref=semantic_source_frame_ref,
                 face_detection=face_detection,
+                event_type_hint="human_presence_no_face",
             )
             semantic_descriptor_result = frame_ref_service.canonicalize_semantic_descriptor(
                 semantic_descriptor_result,

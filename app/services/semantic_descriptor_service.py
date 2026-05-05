@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 import re
+import time
 from typing import Any
 
 from app.config import settings
@@ -19,17 +20,28 @@ from app.services.semantic_backends import (
 
 class SemanticDescriptorService:
     SIMPLE_BACKEND_KEY = "simple"
-    REAL_BACKEND_KEYS = {"qwen_vl", "smolvlm"}
+    QWEN_BACKEND_KEY = "qwen"
+    SMOLVLM_BACKEND_KEY = "smolvlm"
+    AUTO_BACKEND_KEY = "auto"
+    REAL_BACKEND_KEYS = {QWEN_BACKEND_KEY, "qwen_vl", SMOLVLM_BACKEND_KEY}
+    TRACE_VERSION = "semantic_backend_trace_v1"
+    ACTIVATION_POLICY_VERSION = "semantic_vlm_activation_policy_v1"
 
     def __init__(
         self,
         *,
         backends: dict[str, SemanticDescriptorBackend] | None = None,
     ) -> None:
-        self.backends = backends or {
+        if backends is not None:
+            self.backends = backends
+            return
+
+        qwen_backend = QwenVLSemanticBackend()
+        self.backends = {
             self.SIMPLE_BACKEND_KEY: SimpleSemanticDescriptorBackend(),
-            "qwen_vl": QwenVLSemanticBackend(),
-            "smolvlm": SmolVlmSemanticBackend(),
+            self.QWEN_BACKEND_KEY: qwen_backend,
+            "qwen_vl": qwen_backend,
+            self.SMOLVLM_BACKEND_KEY: SmolVlmSemanticBackend(),
         }
 
     def generate(
@@ -38,11 +50,36 @@ class SemanticDescriptorService:
         frame_ref: str,
         source_frame_ref: str | None = None,
         face_detection: FaceDetectionResult | None = None,
+        event_type_hint: str | None = None,
     ) -> SemanticDescriptorResult:
         frame_path = self._resolve_frame_path(frame_ref)
         published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
         requested_backend = settings.semantic_descriptor_backend
-        generation_trace = {
+        requested_key = self._normalize_backend_key(requested_backend)
+        activation = self._vlm_activation_decision(
+            event_type_hint=event_type_hint,
+            face_detection=face_detection,
+        )
+        backend_chain = self._build_backend_chain(requested_backend=requested_backend)
+        generation_trace: dict[str, Any] = {
+            "trace_version": self.TRACE_VERSION,
+            "policy_version": self.ACTIVATION_POLICY_VERSION,
+            "prompt_policy_version": "forensic_observation_json_v1",
+            "semantic_backend_requested": requested_backend,
+            "semantic_backend_normalized": requested_key,
+            "semantic_backend_selected": None,
+            "semantic_backend_selected_key": None,
+            "semantic_backend_fallback_used": False,
+            "semantic_backend_error": None,
+            "semantic_backend_candidate_chain": backend_chain,
+            "semantic_backend_activation_allowed": activation["allowed"],
+            "semantic_backend_activation_reason": activation["reason"],
+            "semantic_backend_event_type_hint": event_type_hint,
+            "semantic_backend_enabled_event_types": activation["enabled_event_types"],
+            "timeout_seconds": settings.effective_vlm_timeout_seconds,
+            "max_new_tokens": settings.vlm_max_new_tokens,
+            "max_image_edge": settings.vlm_max_image_edge,
+            "requested_device": settings.effective_vlm_device,
             "requested_backend": requested_backend,
             "fallback_enabled": settings.semantic_enable_fallback,
             "selected_backend": None,
@@ -50,16 +87,24 @@ class SemanticDescriptorService:
             "attempts": [],
         }
         if frame_path is None:
+            generation_trace["semantic_backend_error"] = "frame_ref_not_found"
             return SemanticDescriptorResult(
                 backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
                 source_frame_ref=published_source_frame_ref,
                 rejection_reasons=["frame_ref_not_found"],
-                descriptor={"generation_trace": generation_trace},
+                descriptor={
+                    "semantic_backend_requested": requested_backend,
+                    "semantic_backend_selected": None,
+                    "semantic_backend_fallback_used": False,
+                    "semantic_backend_error": "frame_ref_not_found",
+                    "semantic_backend_trace": generation_trace,
+                    "generation_trace": generation_trace,
+                },
             )
 
         rejection_reasons: list[str] = []
-        for backend_key in self._build_backend_chain(requested_backend=requested_backend):
-            backend = self.backends.get(backend_key)
+        for backend_key in backend_chain:
+            backend = self._get_backend(backend_key)
             if backend is None:
                 generation_trace["attempts"].append(
                     {
@@ -71,13 +116,29 @@ class SemanticDescriptorService:
                 )
                 continue
 
-            if backend_key in self.REAL_BACKEND_KEYS and not settings.semantic_use_real_vlm:
+            if backend_key in self.REAL_BACKEND_KEYS:
+                enabled, disabled_reason = self._real_backend_enabled(backend_key)
+                if not enabled:
+                    generation_trace["attempts"].append(
+                        {
+                            "backend_key": backend_key,
+                            "backend_name": backend.backend_name,
+                            "status": "skipped",
+                            "reason": disabled_reason,
+                            "model_name": self._model_name_for(backend_key),
+                        }
+                    )
+                    continue
+
+            if backend_key in self.REAL_BACKEND_KEYS and not activation["allowed"]:
                 generation_trace["attempts"].append(
                     {
                         "backend_key": backend_key,
                         "backend_name": backend.backend_name,
                         "status": "skipped",
-                        "reason": "real_vlm_disabled",
+                        "reason": activation["reason"],
+                        "model_name": self._model_name_for(backend_key),
+                        "event_type_hint": event_type_hint,
                     }
                 )
                 continue
@@ -87,10 +148,15 @@ class SemanticDescriptorService:
                 image_path=frame_path,
                 face_detection=face_detection,
                 requested_backend=requested_backend,
-                timeout_seconds=settings.semantic_timeout_seconds,
+                timeout_seconds=settings.effective_vlm_timeout_seconds,
+                max_new_tokens=settings.vlm_max_new_tokens,
+                max_image_edge=settings.vlm_max_image_edge,
+                event_type_hint=event_type_hint,
             )
+            attempt_started_at = time.perf_counter()
             try:
                 backend_output = backend.generate_descriptor(image_path=frame_path, context=context)
+                duration_ms = self._duration_ms(attempt_started_at)
                 descriptor, signature, confidence = self._normalize_descriptor(
                     raw_descriptor=backend_output.descriptor,
                     backend_name=backend_output.backend_name,
@@ -99,17 +165,38 @@ class SemanticDescriptorService:
                     confidence_override=backend_output.confidence,
                     raw_summary=backend_output.raw_summary,
                 )
+                generation_trace["semantic_backend_selected"] = backend_output.backend_name
+                generation_trace["semantic_backend_selected_key"] = backend_key
                 generation_trace["selected_backend"] = backend_output.backend_name
                 generation_trace["selected_backend_key"] = backend_key
                 generation_trace["attempts"].append(
                     {
+                        **backend_output.trace,
                         "backend_key": backend_key,
                         "backend_name": backend_output.backend_name,
                         "status": "success",
-                        **backend_output.trace,
+                        "duration_ms": duration_ms,
+                        "timeout_seconds": context.timeout_seconds,
+                        "max_new_tokens": context.max_new_tokens,
+                        "max_image_edge": context.max_image_edge,
                     }
                 )
-                descriptor["generation_trace"] = deepcopy(generation_trace)
+                fallback_used = self._fallback_used(
+                    requested_key=requested_key,
+                    selected_key=backend_key,
+                    attempts=generation_trace["attempts"],
+                )
+                generation_trace["semantic_backend_fallback_used"] = fallback_used
+                generation_trace["semantic_backend_error"] = self._last_failed_reason(
+                    generation_trace["attempts"]
+                )
+                descriptor = self._attach_backend_trace(
+                    descriptor=descriptor,
+                    generation_trace=generation_trace,
+                    requested_backend=requested_backend,
+                    selected_backend=backend_output.backend_name,
+                    fallback_used=fallback_used,
+                )
                 if backend_output.raw_response is not None:
                     descriptor["backend_response_preview"] = backend_output.raw_response
                 return SemanticDescriptorResult(
@@ -121,17 +208,25 @@ class SemanticDescriptorService:
                     source_frame_ref=published_source_frame_ref,
                 )
             except SemanticBackendError as exc:
+                duration_ms = self._duration_ms(attempt_started_at)
                 rejection_reasons.append(str(exc))
+                failure_details = dict(exc.details)
+                failure_details.setdefault("timeout_seconds", context.timeout_seconds)
                 generation_trace["attempts"].append(
                     {
+                        **failure_details,
                         "backend_key": backend_key,
                         "backend_name": backend.backend_name,
                         "status": "failed",
                         "reason": str(exc),
-                        **exc.details,
+                        "duration_ms": duration_ms,
+                        "timeout_applied_seconds": context.timeout_seconds,
+                        "max_new_tokens": context.max_new_tokens,
+                        "max_image_edge": context.max_image_edge,
                     }
                 )
             except Exception as exc:  # pragma: no cover - defensive path
+                duration_ms = self._duration_ms(attempt_started_at)
                 reason = f"unexpected_backend_error:{backend_key}:{type(exc).__name__}"
                 rejection_reasons.append(reason)
                 generation_trace["attempts"].append(
@@ -140,14 +235,28 @@ class SemanticDescriptorService:
                         "backend_name": backend.backend_name,
                         "status": "failed",
                         "reason": reason,
+                        "duration_ms": duration_ms,
+                        "timeout_seconds": context.timeout_seconds,
+                        "max_new_tokens": context.max_new_tokens,
+                        "max_image_edge": context.max_image_edge,
                     }
                 )
 
+        generation_trace["semantic_backend_error"] = self._last_failed_reason(
+            generation_trace["attempts"]
+        )
         return SemanticDescriptorResult(
             backend=self._backend_name_for(self.SIMPLE_BACKEND_KEY),
             source_frame_ref=published_source_frame_ref,
             rejection_reasons=rejection_reasons or ["semantic_descriptor_unavailable"],
-            descriptor={"generation_trace": generation_trace},
+            descriptor={
+                "semantic_backend_requested": requested_backend,
+                "semantic_backend_selected": None,
+                "semantic_backend_fallback_used": bool(rejection_reasons),
+                "semantic_backend_error": generation_trace["semantic_backend_error"],
+                "semantic_backend_trace": generation_trace,
+                "generation_trace": generation_trace,
+            },
         )
 
     def compare(
@@ -188,9 +297,30 @@ class SemanticDescriptorService:
 
     def _build_backend_chain(self, *, requested_backend: str | None) -> list[str]:
         requested_key = self._normalize_backend_key(requested_backend)
-        fallback_key = self._fallback_key_for(requested_key) if settings.semantic_enable_fallback else None
+        if requested_key == self.SIMPLE_BACKEND_KEY:
+            return [self.SIMPLE_BACKEND_KEY]
+
+        if requested_key == self.AUTO_BACKEND_KEY:
+            preferred_key = self._normalize_auto_preferred_backend(
+                settings.vlm_auto_preferred_backend
+            )
+            secondary_key = (
+                self.SMOLVLM_BACKEND_KEY
+                if preferred_key == self.QWEN_BACKEND_KEY
+                else self.QWEN_BACKEND_KEY
+            )
+            raw_chain: list[str | None] = [preferred_key]
+            if settings.semantic_enable_fallback:
+                raw_chain.extend([secondary_key, self.SIMPLE_BACKEND_KEY])
+        elif requested_key in {self.QWEN_BACKEND_KEY, self.SMOLVLM_BACKEND_KEY}:
+            raw_chain = [requested_key]
+            if settings.semantic_enable_fallback:
+                raw_chain.append(self.SIMPLE_BACKEND_KEY)
+        else:
+            raw_chain = [self.SIMPLE_BACKEND_KEY]
+
         chain: list[str] = []
-        for backend_key in [requested_key, fallback_key, self.SIMPLE_BACKEND_KEY]:
+        for backend_key in raw_chain:
             if backend_key and backend_key not in chain:
                 chain.append(backend_key)
         return chain
@@ -198,30 +328,170 @@ class SemanticDescriptorService:
     def _normalize_backend_key(self, requested_backend: str | None) -> str:
         normalized = (requested_backend or "").strip().lower()
         alias_map = {
+            "auto": self.AUTO_BACKEND_KEY,
             "simple": self.SIMPLE_BACKEND_KEY,
             "simple_color_signature_v1": self.SIMPLE_BACKEND_KEY,
-            "qwen_vl": "qwen_vl",
-            "qwen/qwen2.5-vl-3b-instruct": "qwen_vl",
-            "qwen2.5-vl-3b-instruct": "qwen_vl",
-            "smolvlm": "smolvlm",
-            "smol_vlm": "smolvlm",
-            "huggingfacetb/smolvlm2-2.2b-instruct": "smolvlm",
-            "smolvlm2-2.2b-instruct": "smolvlm",
+            "qwen": self.QWEN_BACKEND_KEY,
+            "qwen_vl": self.QWEN_BACKEND_KEY,
+            "qwen-vl": self.QWEN_BACKEND_KEY,
+            "qwen/qwen2.5-vl-3b-instruct": self.QWEN_BACKEND_KEY,
+            "qwen2.5-vl-3b-instruct": self.QWEN_BACKEND_KEY,
+            "smolvlm": self.SMOLVLM_BACKEND_KEY,
+            "smol_vlm": self.SMOLVLM_BACKEND_KEY,
+            "smol-vlm": self.SMOLVLM_BACKEND_KEY,
+            "huggingfacetb/smolvlm2-2.2b-instruct": self.SMOLVLM_BACKEND_KEY,
+            "smolvlm2-2.2b-instruct": self.SMOLVLM_BACKEND_KEY,
         }
         return alias_map.get(normalized, self.SIMPLE_BACKEND_KEY)
 
-    def _fallback_key_for(self, requested_key: str) -> str | None:
-        if requested_key == "qwen_vl":
-            return "smolvlm"
-        if requested_key == "smolvlm":
-            return self.SIMPLE_BACKEND_KEY
-        return None
+    def _normalize_auto_preferred_backend(self, requested_backend: str | None) -> str:
+        normalized = self._normalize_backend_key(requested_backend)
+        if normalized in {self.QWEN_BACKEND_KEY, self.SMOLVLM_BACKEND_KEY}:
+            return normalized
+        return self.QWEN_BACKEND_KEY
 
     def _backend_name_for(self, backend_key: str) -> str:
-        backend = self.backends.get(backend_key)
+        backend = self._get_backend(backend_key)
         if backend is None:
             return backend_key
         return backend.backend_name
+
+    def _get_backend(self, backend_key: str) -> SemanticDescriptorBackend | None:
+        backend = self.backends.get(backend_key)
+        if backend is not None:
+            return backend
+        if backend_key == self.QWEN_BACKEND_KEY:
+            return self.backends.get("qwen_vl")
+        if backend_key == "qwen_vl":
+            return self.backends.get(self.QWEN_BACKEND_KEY)
+        return None
+
+    def _real_backend_enabled(self, backend_key: str) -> tuple[bool, str | None]:
+        normalized = self._normalize_backend_key(backend_key)
+        if normalized == self.QWEN_BACKEND_KEY:
+            if settings.effective_qwen_vl_enabled:
+                return True, None
+            return False, "qwen_vl_disabled"
+        if normalized == self.SMOLVLM_BACKEND_KEY:
+            if settings.effective_smolvlm_enabled:
+                return True, None
+            return False, "smolvlm_disabled"
+        return True, None
+
+    def _model_name_for(self, backend_key: str) -> str | None:
+        normalized = self._normalize_backend_key(backend_key)
+        if normalized == self.QWEN_BACKEND_KEY:
+            return settings.effective_qwen_model_name
+        if normalized == self.SMOLVLM_BACKEND_KEY:
+            return settings.effective_smolvlm_model_name
+        return None
+
+    def _vlm_activation_decision(
+        self,
+        *,
+        event_type_hint: str | None,
+        face_detection: FaceDetectionResult | None,
+    ) -> dict[str, Any]:
+        enabled_event_types = settings.vlm_event_type_policy
+        if not enabled_event_types:
+            return {
+                "allowed": False,
+                "reason": "vlm_event_policy_empty",
+                "enabled_event_types": [],
+            }
+
+        normalized_event_type = self._normalize_label(event_type_hint, default="")
+        if "*" in enabled_event_types or "all" in enabled_event_types:
+            return {
+                "allowed": True,
+                "reason": "vlm_event_policy_all",
+                "enabled_event_types": enabled_event_types,
+            }
+        if not normalized_event_type:
+            return {
+                "allowed": True,
+                "reason": "vlm_event_policy_no_event_type_hint",
+                "enabled_event_types": enabled_event_types,
+            }
+        if normalized_event_type in enabled_event_types:
+            return {
+                "allowed": True,
+                "reason": f"vlm_event_type_enabled:{normalized_event_type}",
+                "enabled_event_types": enabled_event_types,
+            }
+        if "person_detected" in enabled_event_types and face_detection is not None:
+            return {
+                "allowed": True,
+                "reason": "vlm_event_policy_person_detected",
+                "enabled_event_types": enabled_event_types,
+            }
+        if "face_detected" in enabled_event_types and face_detection and face_detection.detected:
+            return {
+                "allowed": True,
+                "reason": "vlm_event_policy_face_detected",
+                "enabled_event_types": enabled_event_types,
+            }
+        if "face_usable" in enabled_event_types and face_detection and face_detection.usable:
+            return {
+                "allowed": True,
+                "reason": "vlm_event_policy_face_usable",
+                "enabled_event_types": enabled_event_types,
+            }
+        if "no_face" in enabled_event_types and face_detection and not face_detection.usable:
+            return {
+                "allowed": True,
+                "reason": "vlm_event_policy_no_face",
+                "enabled_event_types": enabled_event_types,
+            }
+        return {
+            "allowed": False,
+            "reason": f"vlm_event_type_not_enabled:{normalized_event_type}",
+            "enabled_event_types": enabled_event_types,
+        }
+
+    def _duration_ms(self, started_at: float) -> int:
+        return int(round((time.perf_counter() - started_at) * 1000))
+
+    def _fallback_used(
+        self,
+        *,
+        requested_key: str,
+        selected_key: str,
+        attempts: list[dict[str, Any]],
+    ) -> bool:
+        if selected_key == self.SIMPLE_BACKEND_KEY and requested_key != self.SIMPLE_BACKEND_KEY:
+            return True
+        if requested_key in {self.QWEN_BACKEND_KEY, self.SMOLVLM_BACKEND_KEY}:
+            return selected_key != requested_key
+        return any(
+            attempt.get("status") in {"failed", "skipped"}
+            and attempt.get("backend_key") in self.REAL_BACKEND_KEYS
+            for attempt in attempts
+        )
+
+    def _last_failed_reason(self, attempts: list[dict[str, Any]]) -> str | None:
+        for attempt in reversed(attempts):
+            if attempt.get("status") == "failed" and attempt.get("reason"):
+                return str(attempt["reason"])
+        return None
+
+    def _attach_backend_trace(
+        self,
+        *,
+        descriptor: dict[str, Any],
+        generation_trace: dict[str, Any],
+        requested_backend: str,
+        selected_backend: str,
+        fallback_used: bool,
+    ) -> dict[str, Any]:
+        trace_snapshot = deepcopy(generation_trace)
+        descriptor["semantic_backend_requested"] = requested_backend
+        descriptor["semantic_backend_selected"] = selected_backend
+        descriptor["semantic_backend_fallback_used"] = fallback_used
+        descriptor["semantic_backend_error"] = generation_trace.get("semantic_backend_error")
+        descriptor["semantic_backend_trace"] = trace_snapshot
+        descriptor["generation_trace"] = trace_snapshot
+        return descriptor
 
     def _normalize_descriptor(
         self,

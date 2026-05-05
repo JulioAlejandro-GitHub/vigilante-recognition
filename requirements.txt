@@ -11,3 +11,4 @@ numpy>=1.26,<3
 minio>=7.2.7
 insightface>=0.7,<1
 onnxruntime>=1.17,<2
+# Optional Qwen/SmolVLM runtime dependencies are isolated in requirements-vlm.txt.

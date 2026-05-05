@@ -88,8 +88,8 @@ def test_worker_degrades_to_simple_backend_when_real_vlm_backends_fail(mock_get_
 
     service = SemanticDescriptorService(
         backends={
-            "qwen_vl": FailingSemanticBackend(
-                key="qwen_vl",
+            "qwen": FailingSemanticBackend(
+                key="qwen",
                 backend_name="Qwen/Qwen2.5-VL-3B-Instruct",
                 error=SemanticBackendError(
                     "backend_timeout",
@@ -109,15 +109,17 @@ def test_worker_degrades_to_simple_backend_when_real_vlm_backends_fail(mock_get_
         settings,
         "semantic_use_real_vlm",
         True,
-    ), patch.object(settings, "semantic_descriptor_backend", "qwen_vl"):
+    ), patch.object(settings, "semantic_descriptor_backend", "auto"):
         event = process_fixture("tests/fixtures/frame_ingested_no_face.json")
 
     assert event["event_type"] == "human_presence_no_face"
     semantic_payload = event["payload"]["semantic_descriptor"]
     assert semantic_payload["descriptor_backend"] == "simple_color_signature_v1"
     attempts = semantic_payload["generation_trace"]["attempts"]
-    assert [attempt["backend_key"] for attempt in attempts] == ["qwen_vl", "smolvlm", "simple"]
+    assert [attempt["backend_key"] for attempt in attempts] == ["qwen", "smolvlm", "simple"]
     assert attempts[0]["reason"] == "backend_timeout"
     assert attempts[0]["stage"] == "runtime"
     assert attempts[-1]["status"] == "success"
+    assert semantic_payload["semantic_backend_requested"] == "auto"
+    assert semantic_payload["semantic_backend_fallback_used"] is True
     mock_session.commit.assert_called_once()

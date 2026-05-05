@@ -83,8 +83,8 @@ def test_semantic_descriptor_normalizes_vlm_style_output():
     fixture = load_fixture_message("tests/fixtures/frame_ingested_no_face.json")
     service = SemanticDescriptorService(
         backends={
-            "qwen_vl": StubSemanticBackend(
-                key="qwen_vl",
+            "qwen": StubSemanticBackend(
+                key="qwen",
                 backend_name="Qwen/Qwen2.5-VL-3B-Instruct",
                 descriptor=raw_descriptor,
             ),
@@ -104,7 +104,7 @@ def test_semantic_descriptor_normalizes_vlm_style_output():
     with patch.object(settings, "semantic_use_real_vlm", True), patch.object(
         settings,
         "semantic_descriptor_backend",
-        "qwen_vl",
+        "qwen",
     ):
         descriptor = service.generate(frame_ref=fixture.frame_ref)
 
@@ -119,3 +119,7 @@ def test_semantic_descriptor_normalizes_vlm_style_output():
     assert descriptor.descriptor["pose_direction"] == "left"
     assert descriptor.descriptor["scene_observation_quality"]["level"] == "medium"
     assert descriptor.descriptor["descriptor_confidence"] == 0.77
+    assert descriptor.descriptor["semantic_backend_requested"] == "qwen"
+    assert descriptor.descriptor["semantic_backend_selected"] == "Qwen/Qwen2.5-VL-3B-Instruct"
+    assert descriptor.descriptor["semantic_backend_fallback_used"] is False
+    assert descriptor.descriptor["semantic_backend_trace"]["attempts"][0]["backend_key"] == "qwen"

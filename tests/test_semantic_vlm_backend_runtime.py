@@ -8,6 +8,7 @@ from app.services.semantic_backends import (
     QwenVLSemanticBackend,
     SemanticBackendContext,
     SemanticBackendError,
+    SmolVlmSemanticBackend,
     VlmRuntimeError,
     VlmRuntimeResult,
 )
@@ -94,3 +95,72 @@ def test_qwen_backend_surfaces_timeout_reason_from_runner():
 
     assert excinfo.value.details["stage"] == "runtime"
     assert excinfo.value.details["timeout_seconds"] == 9
+
+
+def test_smolvlm_backend_parses_json_and_exposes_runtime_trace():
+    runner = StubRunner(
+        result=VlmRuntimeResult(
+            raw_text='{"subject_type":"person","top_clothing":{"category":"jacket","color":"gray","pattern":"solid"},"bottom_clothing":{"category":"pants","color":"black","pattern":"solid"},"dominant_colors":["gray","black"],"accessories":[],"carried_object":"unknown","body_build":"average","pose_direction":"front","scene_observation_quality":{"level":"medium","notes":"partial frame"},"descriptor_confidence":0.74,"raw_summary":"person with gray jacket"}',
+            model_name="HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+            device="cpu",
+            requested_device="cpu",
+            dtype_name="float32",
+            extra={
+                "max_new_tokens": 96,
+                "max_image_edge": 512,
+                "image_resized": False,
+            },
+        )
+    )
+    backend = SmolVlmSemanticBackend(
+        model_name="HuggingFaceTB/SmolVLM2-2.2B-Instruct",
+        device_preference="cpu",
+        runner=runner,
+    )
+    image_path = Path("tests/fixtures/images/face_low_quality.jpg")
+    context = SemanticBackendContext(
+        frame_ref=str(image_path),
+        image_path=image_path,
+        timeout_seconds=7,
+        max_new_tokens=96,
+        max_image_edge=512,
+    )
+
+    output = backend.generate_descriptor(image_path=image_path, context=context)
+
+    assert output.descriptor["top_clothing"]["category"] == "jacket"
+    assert output.confidence == 0.74
+    assert output.trace["model_name"] == "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
+    assert output.trace["device"] == "cpu"
+    assert output.trace["prompt_policy_version"] == "forensic_observation_json_v1"
+    assert output.trace["max_new_tokens"] == 96
+    assert runner.calls[0]["timeout_seconds"] == 7
+
+
+def test_transformers_backend_reuses_runner_instance_between_calls():
+    runner = StubRunner(
+        result=VlmRuntimeResult(
+            raw_text='{"subject_type":"person","top_clothing":{"category":"shirt","color":"white","pattern":"solid"},"bottom_clothing":{"category":"pants","color":"black","pattern":"solid"},"dominant_colors":["white","black"],"accessories":[],"carried_object":"unknown","body_build":"average","pose_direction":"front","scene_observation_quality":{"level":"medium","notes":"stable"},"descriptor_confidence":0.7,"raw_summary":"person with white shirt"}',
+            model_name="Qwen/Qwen2.5-VL-3B-Instruct",
+            device="cpu",
+            requested_device="cpu",
+            dtype_name="float32",
+        )
+    )
+    backend = QwenVLSemanticBackend(
+        model_name="Qwen/Qwen2.5-VL-3B-Instruct",
+        device_preference="cpu",
+        runner=runner,
+    )
+    image_path = Path("tests/fixtures/images/face_low_quality.jpg")
+    context = SemanticBackendContext(
+        frame_ref=str(image_path),
+        image_path=image_path,
+        timeout_seconds=5,
+    )
+
+    backend.generate_descriptor(image_path=image_path, context=context)
+    backend.generate_descriptor(image_path=image_path, context=context)
+
+    assert len(runner.calls) == 2
+    assert runner.calls[0]["timeout_seconds"] == runner.calls[1]["timeout_seconds"] == 5
