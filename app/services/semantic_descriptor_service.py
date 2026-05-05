@@ -18,6 +18,11 @@ from app.services.semantic_backends import (
 )
 from app.services.vlm_execution_policy_service import build_vlm_execution_policy_snapshot
 from app.services.vlm_metrics_service import build_success_attempt_metrics
+from app.services.vlm_degradation_service import vlm_concurrency_gate, vlm_degradation_state
+from app.services.vlm_policy_service import (
+    evaluate_attempt_budget,
+    resolve_vlm_policy,
+)
 
 
 class SemanticDescriptorService:
@@ -53,33 +58,52 @@ class SemanticDescriptorService:
         source_frame_ref: str | None = None,
         face_detection: FaceDetectionResult | None = None,
         event_type_hint: str | None = None,
+        camera_id: str | None = None,
+        camera_metadata: dict[str, Any] | None = None,
     ) -> SemanticDescriptorResult:
         service_started_at = time.perf_counter()
         frame_path = self._resolve_frame_path(frame_ref)
         published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
         requested_backend = settings.semantic_descriptor_backend
-        requested_key = self._normalize_backend_key(requested_backend)
-        activation = self._vlm_activation_decision(
+        policy_decision = resolve_vlm_policy(
+            requested_backend=requested_backend,
             event_type_hint=event_type_hint,
+            camera_id=camera_id,
+            camera_metadata=camera_metadata,
             face_detection=face_detection,
         )
-        backend_chain = self._build_backend_chain(requested_backend=requested_backend)
+        requested_key = policy_decision.effective_backend_key
+        backend_chain = policy_decision.backend_chain
+        policy_trace = policy_decision.trace_payload()
         generation_trace: dict[str, Any] = {
             "trace_version": self.TRACE_VERSION,
-            "policy_version": self.ACTIVATION_POLICY_VERSION,
+            "policy_version": policy_trace["policy_version"],
+            "activation_policy_version": self.ACTIVATION_POLICY_VERSION,
             "prompt_policy_version": "forensic_observation_json_v1",
             "execution_policy": build_vlm_execution_policy_snapshot(),
+            "vlm_policy_trace": policy_trace,
             "semantic_backend_requested": requested_backend,
-            "semantic_backend_normalized": requested_key,
+            "semantic_backend_normalized": policy_decision.requested_backend_key,
+            "semantic_backend_effective_request": policy_decision.effective_backend_request,
+            "semantic_backend_effective_key": policy_decision.effective_backend_key,
+            "semantic_backend_allowed_key": policy_decision.allowed_backend_key,
             "semantic_backend_selected": None,
             "semantic_backend_selected_key": None,
             "semantic_backend_fallback_used": False,
             "semantic_backend_error": None,
             "semantic_backend_candidate_chain": backend_chain,
-            "semantic_backend_activation_allowed": activation["allowed"],
-            "semantic_backend_activation_reason": activation["reason"],
+            "semantic_backend_policy_allowed": policy_decision.vlm_allowed,
+            "semantic_backend_policy_reason": policy_decision.reason,
+            "semantic_backend_policy_sources": policy_decision.policy_sources,
+            "semantic_backend_activation_allowed": policy_decision.vlm_allowed,
+            "semantic_backend_activation_reason": policy_decision.reason,
             "semantic_backend_event_type_hint": event_type_hint,
-            "semantic_backend_enabled_event_types": activation["enabled_event_types"],
+            "semantic_backend_enabled_event_types": policy_decision.event_policy[
+                "enabled_event_types"
+            ],
+            "camera_id": camera_id,
+            "event_type": event_type_hint,
+            "policy_budget": policy_decision.budget,
             "timeout_seconds": settings.effective_vlm_timeout_seconds,
             "timeout_applied_seconds": settings.effective_vlm_timeout_seconds,
             "max_new_tokens": settings.vlm_max_new_tokens,
@@ -92,7 +116,7 @@ class SemanticDescriptorService:
             "selected_backend_key": None,
             "descriptor_valid": False,
             "total_duration_ms": None,
-            "attempts": [],
+            "attempts": [self._policy_skipped_attempt(attempt) for attempt in policy_decision.skipped_backends],
         }
         if frame_path is None:
             generation_trace["semantic_backend_error"] = "frame_ref_not_found"
@@ -103,9 +127,12 @@ class SemanticDescriptorService:
                 rejection_reasons=["frame_ref_not_found"],
                 descriptor={
                     "semantic_backend_requested": requested_backend,
+                    "semantic_backend_effective_request": policy_decision.effective_backend_request,
+                    "semantic_backend_allowed_key": policy_decision.allowed_backend_key,
                     "semantic_backend_selected": None,
                     "semantic_backend_fallback_used": False,
                     "semantic_backend_error": "frame_ref_not_found",
+                    "vlm_policy_trace": policy_trace,
                     "semantic_backend_trace": generation_trace,
                     "generation_trace": generation_trace,
                 },
@@ -141,32 +168,47 @@ class SemanticDescriptorService:
                     )
                     continue
 
-            if backend_key in self.REAL_BACKEND_KEYS and not activation["allowed"]:
-                generation_trace["attempts"].append(
-                    {
-                        "backend_key": backend_key,
-                        "backend_name": backend.backend_name,
-                        "status": "skipped",
-                        "reason": activation["reason"],
-                        "model_name": self._model_name_for(backend_key),
-                        "event_type_hint": event_type_hint,
-                        "descriptor_valid": False,
-                    }
-                )
-                continue
-
             context = SemanticBackendContext(
                 frame_ref=frame_ref,
                 image_path=frame_path,
                 face_detection=face_detection,
-                requested_backend=requested_backend,
+                requested_backend=policy_decision.effective_backend_request,
                 timeout_seconds=settings.effective_vlm_timeout_seconds,
                 max_new_tokens=settings.vlm_max_new_tokens,
                 max_image_edge=settings.vlm_max_image_edge,
                 event_type_hint=event_type_hint,
+                extra={
+                    "camera_id": camera_id,
+                    "vlm_policy": policy_trace,
+                },
             )
             attempt_started_at = time.perf_counter()
+            concurrency_acquired = False
             try:
+                if backend_key in self.REAL_BACKEND_KEYS:
+                    concurrency_acquired, concurrency_trace = vlm_concurrency_gate.acquire(
+                        timeout_seconds=settings.vlm_concurrency_acquire_timeout_seconds,
+                        max_concurrent_inferences=int(
+                            policy_decision.budget.get("max_concurrent_inferences") or 0
+                        ),
+                    )
+                    if not concurrency_acquired:
+                        generation_trace["attempts"].append(
+                            {
+                                "backend_key": backend_key,
+                                "backend_name": backend.backend_name,
+                                "status": "skipped",
+                                "reason": concurrency_trace.get("reason")
+                                or "vlm_concurrency_budget_exhausted",
+                                "model_name": self._model_name_for(backend_key),
+                                "event_type_hint": event_type_hint,
+                                "camera_id": camera_id,
+                                "concurrency": concurrency_trace,
+                                "policy": policy_trace,
+                                "descriptor_valid": False,
+                            }
+                        )
+                        continue
                 backend_output = backend.generate_descriptor(image_path=frame_path, context=context)
                 duration_ms = self._duration_ms(attempt_started_at)
                 descriptor, signature, confidence = self._normalize_descriptor(
@@ -177,29 +219,54 @@ class SemanticDescriptorService:
                     confidence_override=backend_output.confidence,
                     raw_summary=backend_output.raw_summary,
                 )
+                attempt_payload = {
+                    **backend_output.trace,
+                    "backend_key": backend_key,
+                    "backend_name": backend_output.backend_name,
+                    "status": "success",
+                    "duration_ms": duration_ms,
+                    "timeout_applied_seconds": context.timeout_seconds,
+                    "timeout_seconds": context.timeout_seconds,
+                    "max_new_tokens": context.max_new_tokens,
+                    "max_image_edge": context.max_image_edge,
+                    "event_type": event_type_hint,
+                    "camera_id": camera_id,
+                    "policy": policy_trace,
+                    **build_success_attempt_metrics(
+                        descriptor=descriptor,
+                        signature=signature,
+                        raw_summary=descriptor.get("raw_summary"),
+                        duration_ms=duration_ms,
+                    ),
+                }
+                budget_allowed, budget_reasons, budget_trace = evaluate_attempt_budget(
+                    backend_key=self._normalize_backend_key(backend_key),
+                    attempt=attempt_payload,
+                    policy_decision=policy_decision,
+                )
+                attempt_payload["budget"] = budget_trace
+                if not budget_allowed:
+                    reason = budget_reasons[0]
+                    rejection_reasons.append(reason)
+                    attempt_payload["status"] = "rejected_by_budget"
+                    attempt_payload["reason"] = reason
+                    attempt_payload["descriptor_valid"] = False
+                    generation_trace["attempts"].append(attempt_payload)
+                    vlm_degradation_state.record_failure(
+                        self._normalize_backend_key(backend_key),
+                        reason=reason,
+                    )
+                    continue
+
+                if backend_key in self.REAL_BACKEND_KEYS:
+                    attempt_payload["health_after_attempt"] = vlm_degradation_state.record_success(
+                        self._normalize_backend_key(backend_key)
+                    )
                 generation_trace["semantic_backend_selected"] = backend_output.backend_name
                 generation_trace["semantic_backend_selected_key"] = backend_key
                 generation_trace["selected_backend"] = backend_output.backend_name
                 generation_trace["selected_backend_key"] = backend_key
-                generation_trace["attempts"].append(
-                    {
-                        **backend_output.trace,
-                        "backend_key": backend_key,
-                        "backend_name": backend_output.backend_name,
-                        "status": "success",
-                        "duration_ms": duration_ms,
-                        "timeout_applied_seconds": context.timeout_seconds,
-                        "timeout_seconds": context.timeout_seconds,
-                        "max_new_tokens": context.max_new_tokens,
-                        "max_image_edge": context.max_image_edge,
-                        **build_success_attempt_metrics(
-                            descriptor=descriptor,
-                            signature=signature,
-                            raw_summary=descriptor.get("raw_summary"),
-                            duration_ms=duration_ms,
-                        ),
-                    }
-                )
+                generation_trace["attempts"].append(attempt_payload)
                 fallback_used = self._fallback_used(
                     requested_key=requested_key,
                     selected_key=backend_key,
@@ -244,9 +311,17 @@ class SemanticDescriptorService:
                         "timeout_applied_seconds": context.timeout_seconds,
                         "max_new_tokens": context.max_new_tokens,
                         "max_image_edge": context.max_image_edge,
+                        "event_type": event_type_hint,
+                        "camera_id": camera_id,
+                        "policy": policy_trace,
                         "descriptor_valid": False,
                     }
                 )
+                if backend_key in self.REAL_BACKEND_KEYS:
+                    vlm_degradation_state.record_failure(
+                        self._normalize_backend_key(backend_key),
+                        reason=str(exc),
+                    )
             except Exception as exc:  # pragma: no cover - defensive path
                 duration_ms = self._duration_ms(attempt_started_at)
                 reason = f"unexpected_backend_error:{backend_key}:{type(exc).__name__}"
@@ -262,9 +337,20 @@ class SemanticDescriptorService:
                         "timeout_applied_seconds": context.timeout_seconds,
                         "max_new_tokens": context.max_new_tokens,
                         "max_image_edge": context.max_image_edge,
+                        "event_type": event_type_hint,
+                        "camera_id": camera_id,
+                        "policy": policy_trace,
                         "descriptor_valid": False,
                     }
                 )
+                if backend_key in self.REAL_BACKEND_KEYS:
+                    vlm_degradation_state.record_failure(
+                        self._normalize_backend_key(backend_key),
+                        reason=reason,
+                    )
+            finally:
+                if concurrency_acquired:
+                    vlm_concurrency_gate.release()
 
         generation_trace["semantic_backend_error"] = self._last_failed_reason(
             generation_trace["attempts"]
@@ -276,9 +362,12 @@ class SemanticDescriptorService:
             rejection_reasons=rejection_reasons or ["semantic_descriptor_unavailable"],
             descriptor={
                 "semantic_backend_requested": requested_backend,
+                "semantic_backend_effective_request": policy_decision.effective_backend_request,
+                "semantic_backend_allowed_key": policy_decision.allowed_backend_key,
                 "semantic_backend_selected": None,
                 "semantic_backend_fallback_used": bool(rejection_reasons),
                 "semantic_backend_error": generation_trace["semantic_backend_error"],
+                "vlm_policy_trace": policy_trace,
                 "semantic_backend_trace": generation_trace,
                 "generation_trace": generation_trace,
             },
@@ -489,16 +578,25 @@ class SemanticDescriptorService:
         if requested_key in {self.QWEN_BACKEND_KEY, self.SMOLVLM_BACKEND_KEY}:
             return selected_key != requested_key
         return any(
-            attempt.get("status") in {"failed", "skipped"}
+            attempt.get("status") in {"failed", "skipped", "rejected_by_budget"}
             and attempt.get("backend_key") in self.REAL_BACKEND_KEYS
             for attempt in attempts
         )
 
     def _last_failed_reason(self, attempts: list[dict[str, Any]]) -> str | None:
         for attempt in reversed(attempts):
-            if attempt.get("status") == "failed" and attempt.get("reason"):
+            if attempt.get("status") in {"failed", "rejected_by_budget"} and attempt.get("reason"):
                 return str(attempt["reason"])
         return None
+
+    def _policy_skipped_attempt(self, attempt: dict[str, Any]) -> dict[str, Any]:
+        backend_key = str(attempt.get("backend_key") or "")
+        return {
+            **attempt,
+            "backend_name": self._backend_name_for(backend_key) if backend_key else backend_key,
+            "model_name": self._model_name_for(backend_key),
+            "descriptor_valid": False,
+        }
 
     def _attach_backend_trace(
         self,
@@ -511,9 +609,16 @@ class SemanticDescriptorService:
     ) -> dict[str, Any]:
         trace_snapshot = deepcopy(generation_trace)
         descriptor["semantic_backend_requested"] = requested_backend
+        descriptor["semantic_backend_effective_request"] = generation_trace.get(
+            "semantic_backend_effective_request"
+        )
+        descriptor["semantic_backend_allowed_key"] = generation_trace.get(
+            "semantic_backend_allowed_key"
+        )
         descriptor["semantic_backend_selected"] = selected_backend
         descriptor["semantic_backend_fallback_used"] = fallback_used
         descriptor["semantic_backend_error"] = generation_trace.get("semantic_backend_error")
+        descriptor["vlm_policy_trace"] = generation_trace.get("vlm_policy_trace")
         descriptor["semantic_backend_trace"] = trace_snapshot
         descriptor["generation_trace"] = trace_snapshot
         return descriptor

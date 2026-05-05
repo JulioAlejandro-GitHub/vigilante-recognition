@@ -113,6 +113,10 @@ def test_worker_degrades_to_simple_backend_when_real_vlm_backends_fail(mock_get_
         settings,
         "vlm_auto_preferred_backend",
         "qwen",
+    ), patch.object(
+        settings,
+        "vlm_enable_for_event_types",
+        "human_presence_no_face",
     ):
         event = process_fixture("tests/fixtures/frame_ingested_no_face.json")
 

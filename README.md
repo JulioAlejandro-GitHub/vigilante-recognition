@@ -71,15 +71,16 @@ Su objetivo actual es dejar un bootstrap funcional para:
   - `smolvlm` para `HuggingFaceTB/SmolVLM2-2.2B-Instruct`
   - `simple` para `simple_color_signature_v1`
 - `qwen_vl` se conserva como alias legacy de `qwen`
-- `simple` no intenta VLM; `qwen` y `smolvlm` fuerzan ese backend y caen a `simple` solo si `SEMANTIC_ENABLE_FALLBACK=true`; `auto` intenta el backend preferido y luego el secundario antes de degradar a `simple`
+- `simple` no intenta VLM; `qwen` y `smolvlm` fuerzan ese backend y caen a `simple` si `SEMANTIC_ENABLE_FALLBACK=true`; `auto` intenta el backend preferido y luego el secundario antes de degradar a `simple`
 - la política inicial mantiene `SEMANTIC_DESCRIPTOR_BACKEND=simple` como default global seguro y usa `VLM_AUTO_PREFERRED_BACKEND=qwen` en entorno local acelerado; SmolVLM2 queda como secundario de menor memoria
+- la política operativa VLM filtra por tipo de evento, cámara, presupuesto de latencia/memoria/concurrencia y estado reciente del backend antes de ejecutar un VLM real
 - `QWEN_VL_ENABLED=false` y `SMOLVLM_ENABLED=false` mantienen los VLM apagados aunque el backend solicitado sea `qwen`, `smolvlm` o `auto`
 - cuando un VLM está habilitado, el backend real se ejecuta en subprocess aislado para proteger el worker ante timeouts o fallos de carga/inferencia
 - el selector de device soporta `cpu`, `mps`, `cuda` y `auto`, con resolución robusta y trazabilidad en `semantic_descriptor.generation_trace`
 - si el backend principal devuelve salida inválida, hace timeout o falla al cargar/inferir, el worker registra el error y aplica fallback según la cadena configurada
 - cada evento con descriptor incluye `semantic_backend_requested`, `semantic_backend_selected`, `semantic_backend_fallback_used`, `semantic_backend_error` y `semantic_backend_trace`
-- `semantic_backend_trace` registra política efectiva, backend solicitado/seleccionado, fallback, latencia total, timeout aplicado, device, resize de imagen, longitud de salida, validez del descriptor y señales de memoria cuando el runtime puede observarlas
-- `VLM_ENABLE_FOR_EVENT_TYPES` limita cuándo se intenta VLM; el worker pasa `face_detected_unidentified` o `human_presence_no_face` como hint inicial
+- `semantic_backend_trace` registra política efectiva, backend solicitado/permitido/seleccionado, fallback, latencia total, timeout aplicado, device, resize de imagen, longitud de salida, validez del descriptor y señales de memoria cuando el runtime puede observarlas
+- `VLM_ENABLE_FOR_EVENT_TYPES` limita cuándo se intenta VLM; por defecto habilita eventos de mayor valor (`manual_review_required`, `identity_conflict`, `recurrent_unresolved_subject`, `case_suggestion_created`) y deja `human_presence_no_face` en `simple`
 
 ### Resolución de cámara en Slice 1
 
@@ -424,14 +425,19 @@ Tuning inicial:
 
 La precedencia de configuración efectiva es:
 
-1. override por cámara en `frame.ingested.payload.metadata`
-2. override por cámara en `INSIGHTFACE_CAMERA_OVERRIDES_JSON`
-3. configuración global de InsightFace y `FACE_QUALITY_THRESHOLD`
-4. defaults de `app/config.py`
+1. config viva de `api.camera.metadata.recognition`, transportada por ingestion
+   en `frame.ingested.payload.metadata.camera_runtime_config`
+2. override legacy en `frame.ingested.payload.metadata`
+3. override por cámara en `INSIGHTFACE_CAMERA_OVERRIDES_JSON`
+4. configuración global de InsightFace y `FACE_QUALITY_THRESHOLD`
+5. defaults de `app/config.py`
 
 Recognition lee metadata de cámara desde `frame.ingested.payload.metadata` si el
 evento trae alguno de estos objetos:
 
+- `metadata.camera_runtime_config.recognition.face_tuning` con
+  `config_source=api.camera.metadata`
+- `metadata.recognition.face_tuning`
 - `metadata.insightface`
 - `metadata.insightface_tuning`
 - `metadata.face_tuning.insightface`
@@ -474,9 +480,11 @@ Trazabilidad por evento:
 `face_backend_trace` incluye, para InsightFace, `configuration`,
 `backend_load_ms`, `runtime_load_elapsed_ms`, `runtime_reused`,
 `detect_elapsed_ms`, `faces_detected`, `selected_face_score`, `camera_id`,
-`config_source`, `camera_override_applied` y `quality_thresholds`. Dentro de
-`configuration` quedan la `det_size`, `detection_threshold`, `max_faces`, source
-efectivo y errores de override si existieron. En logs,
+`config_source`, `face_tuning_source`, `camera_config_version`,
+`camera_config_hash`, `effective_config_hash`, `camera_override_applied` y
+`quality_thresholds`. Dentro de `configuration` quedan la `det_size`,
+`detection_threshold`, `max_faces`, source efectivo y errores de override si
+existieron. En logs,
 `insightface_backend_loaded` debe aparecer solo cuando se crea un runtime nuevo;
 los frames normales quedan cubiertos por `face_backend_selected stage=detect`
 con latencias y configuración efectiva.
@@ -505,9 +513,29 @@ El worker puede usar un backend VLM real, pero no es obligatorio para tests ni s
 - Límite de salida inicial: `VLM_MAX_NEW_TOKENS=192`
 - Límite de imagen inicial: `VLM_MAX_IMAGE_EDGE=384`
 - Guard de serialización por proceso/modelo: `VLM_SERIALIZATION_GUARD_ENABLED=true`
-- Activación por contexto: `VLM_ENABLE_FOR_EVENT_TYPES=face_detected_unidentified,human_presence_no_face,manual_review_required,recurrent_unresolved_subject,case_suggestion_created`
+- Activación por contexto: `VLM_ENABLE_FOR_EVENT_TYPES=manual_review_required,identity_conflict,recurrent_unresolved_subject,case_suggestion_created`
+- Cámaras deshabilitadas: `VLM_DISABLE_FOR_CAMERA_IDS=uuid1,uuid2`
+- Override por cámara: `VLM_CAMERA_POLICY_OVERRIDES_JSON='{"camera-id":{"enabled":true,"backend":"auto","preferred_backend":"qwen","secondary_backend":"smolvlm","enable_for_event_types":["manual_review_required"],"max_latency_seconds":30,"max_rss_mb":8192}}'`
+- Presupuesto de latencia: `VLM_MAX_ALLOWED_LATENCY_SECONDS=60`
+- Presupuesto RSS: `VLM_MAX_ALLOWED_RSS_MB=0`, donde `0` desactiva ese límite
+- Concurrencia VLM máxima por worker: `VLM_MAX_CONCURRENT_INFERENCES=1`
+- Política de degradación: `VLM_DEGRADATION_POLICY=auto_then_secondary_then_simple|preferred_then_secondary_then_simple|preferred_then_simple|simple_only`
+- Backend secundario explícito: `VLM_SECONDARY_BACKEND=smolvlm`
+- Circuit breaker simple: `VLM_RECENT_FAILURE_THRESHOLD=3`, `VLM_CIRCUIT_BREAKER_WINDOW_SECONDS=300`, `VLM_CIRCUIT_BREAKER_COOLDOWN_SECONDS=300`
 - Fallback automático: `SEMANTIC_ENABLE_FALLBACK=true`
 - Alias legacy soportados: `qwen_vl`, `SEMANTIC_USE_REAL_VLM`, `SEMANTIC_VLM_PRIMARY_MODEL`, `SEMANTIC_VLM_FALLBACK_MODEL`, `SEMANTIC_DEVICE`, `SEMANTIC_TIMEOUT_SECONDS`
+
+La precedencia de política es:
+
+1. config viva de `api.camera.metadata.recognition.vlm_policy`, transportada por
+   ingestion en `payload.metadata.camera_runtime_config`
+2. metadata legacy de payload (`payload.metadata.vlm_policy`,
+   `semantic_vlm_policy`, `metadata.recognition.vlm_policy` o claves planas
+   equivalentes)
+3. `VLM_CAMERA_POLICY_OVERRIDES_JSON` y `VLM_DISABLE_FOR_CAMERA_IDS`
+4. defaults globales
+
+Un override por cámara puede deshabilitar VLM, forzar `simple`, forzar `qwen`/`smolvlm`/`auto`, cambiar eventos elegibles y ajustar presupuestos. Si el default global es `SEMANTIC_DESCRIPTOR_BACKEND=simple`, una cámara con `enabled=true` y `backend=auto|qwen|smolvlm` puede habilitar VLM solo para esa cámara.
 
 Las dependencias VLM están aisladas para no volver pesada la instalación base:
 
@@ -565,16 +593,31 @@ Si `qwen` o `smolvlm` fallan por import, modelo no disponible, timeout, memoria,
 
 La traza comparable queda en `payload.semantic_descriptor.semantic_backend_trace` e incluye:
 
-- `semantic_backend_requested`, `semantic_backend_selected`, `semantic_backend_fallback_used`
+- `semantic_backend_requested`, `semantic_backend_effective_request`, `semantic_backend_allowed_key`, `semantic_backend_selected`, `semantic_backend_fallback_used`
+- `vlm_policy_trace` con `camera_id`, `event_type`, `config_source`,
+  `vlm_policy_source`, `camera_config_version`, `camera_config_hash`,
+  `effective_policy_hash`, fuentes de política, presupuesto, cadena permitida,
+  backend permitido y razones de gating
 - `total_duration_ms`, `duration_ms`, `timeout_applied_seconds`
 - `max_new_tokens`, `max_image_edge`, `requested_device`, `device`, `dtype`
 - `image_original_size`, `image_inference_size`, `image_resized`
 - `raw_output_chars`, `descriptor_output_chars`, `descriptor_valid`
+- `budget.status`, `budget.reasons`, latencia observada y memoria observada por intento
 - `model_load_elapsed_ms`, `runtime_inference_elapsed_ms` y memoria `*_rss_mb`/`*_max_rss_mb` si está disponible
+
+Además, cada evento emitido por recognition incluye
+`payload.camera_runtime_config_trace` con `config_source`,
+`camera_config_version`, `camera_config_hash`, `camera_override_applied`,
+`face_tuning_source`, `vlm_policy_source`, `face_effective_config_hash` y
+`vlm_effective_policy_hash`. Si una cámara no trae config viva, la traza queda
+como `config_source=not_provided` y muestra los sources efectivos de fallback
+(`global`, `camera_metadata`, `camera_overrides_json` o `global_defaults`).
 
 Política operativa inicial:
 
 - `simple` sigue siendo el default global y el único backend recomendado para CI.
+- `human_presence_no_face` y otros eventos de baja prioridad van directo a `simple` salvo override explícito.
+- `manual_review_required`, `identity_conflict`, `recurrent_unresolved_subject` y `case_suggestion_created` son los eventos VLM de mayor valor por defecto.
 - `qwen` es el primer candidato para flujo local enriquecido en esta máquina MPS y para `auto`.
 - `smolvlm` queda como secundario cuando se quiera reducir memoria máxima o comparar estabilidad; su salida fue más genérica en la validación inicial.
 - `auto` debe quedar con fallback habilitado; si los VLM fallan, el evento conserva `source_frame_ref` canónico y el descriptor simple mantiene compatibilidad con `vigilante-api`, `vigilante-media` y `vigilante-web`.
@@ -634,7 +677,18 @@ Política operativa inicial:
 - `VLM_MAX_NEW_TOKENS=192`
 - `VLM_MAX_IMAGE_EDGE=384`
 - `VLM_SERIALIZATION_GUARD_ENABLED=true`
-- `VLM_ENABLE_FOR_EVENT_TYPES=face_detected_unidentified,human_presence_no_face,manual_review_required,recurrent_unresolved_subject,case_suggestion_created`
+- `VLM_ENABLE_FOR_EVENT_TYPES=manual_review_required,identity_conflict,recurrent_unresolved_subject,case_suggestion_created`
+- `VLM_DISABLE_FOR_CAMERA_IDS=`
+- `VLM_CAMERA_POLICY_OVERRIDES_JSON={}`
+- `VLM_MAX_ALLOWED_LATENCY_SECONDS=60`
+- `VLM_MAX_ALLOWED_RSS_MB=0`
+- `VLM_MAX_CONCURRENT_INFERENCES=1`
+- `VLM_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS=0`
+- `VLM_DEGRADATION_POLICY=auto_then_secondary_then_simple`
+- `VLM_SECONDARY_BACKEND=smolvlm`
+- `VLM_RECENT_FAILURE_THRESHOLD=3`
+- `VLM_CIRCUIT_BREAKER_WINDOW_SECONDS=300`
+- `VLM_CIRCUIT_BREAKER_COOLDOWN_SECONDS=300`
 - `SEMANTIC_SIMILARITY_THRESHOLD=0.72`
 - `RECURRENT_SUBJECT_THRESHOLD=0.78`
 - `CASE_SUGGESTION_THRESHOLD=0.9`

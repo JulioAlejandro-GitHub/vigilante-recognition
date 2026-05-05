@@ -34,6 +34,7 @@ from app.services.face_backend_service import SimpleFaceBackend
 from app.services.face_matching_service import FaceMatchingService
 from app.services.canonical_frame_ref_service import CanonicalFrameRefService
 from app.services.camera_face_metrics_service import log_all_camera_face_metrics
+from app.services.camera_runtime_config_service import extract_camera_runtime_config
 from app.services.presence_service import PresenceService
 from app.services.recurrent_subject_service import RecurrentSubjectService
 from app.services.semantic_descriptor_service import SemanticDescriptorService
@@ -68,6 +69,8 @@ def _safe_generate_semantic_descriptor(
     source_frame_ref: str | None = None,
     face_detection,
     event_type_hint: str | None = None,
+    camera_id: str | None = None,
+    camera_metadata: dict | None = None,
 ) -> SemanticDescriptorResult:
     published_source_frame_ref = frame_ref if source_frame_ref is None else source_frame_ref
     try:
@@ -76,6 +79,8 @@ def _safe_generate_semantic_descriptor(
             source_frame_ref=published_source_frame_ref,
             face_detection=face_detection,
             event_type_hint=event_type_hint,
+            camera_id=camera_id,
+            camera_metadata=camera_metadata,
         )
     except Exception as exc:  # pragma: no cover - defensive path
         logger.exception(
@@ -91,6 +96,8 @@ def _safe_generate_semantic_descriptor(
             "semantic_backend_fallback_used": True,
             "semantic_backend_error": f"unexpected_service_error:{type(exc).__name__}",
             "semantic_backend_event_type_hint": event_type_hint,
+            "camera_id": camera_id,
+            "event_type": event_type_hint,
             "requested_backend": settings.semantic_descriptor_backend,
             "fallback_enabled": settings.semantic_enable_fallback,
             "timeout_seconds": settings.effective_vlm_timeout_seconds,
@@ -125,6 +132,76 @@ def _safe_generate_semantic_descriptor(
                 "semantic_backend_error": f"unexpected_service_error:{type(exc).__name__}",
             },
         )
+
+
+def _build_camera_runtime_config_trace(
+    *,
+    message: FrameIngestedMessage,
+    face_detection,
+    semantic_descriptor_result: SemanticDescriptorResult | None,
+) -> dict:
+    runtime_config = extract_camera_runtime_config(message.payload.metadata)
+    trace = runtime_config.trace_payload(camera_id=message.camera_id)
+
+    face_trace = dict(getattr(face_detection, "face_backend_trace", {}) or {})
+    face_configuration = face_trace.get("configuration")
+    if not isinstance(face_configuration, dict):
+        face_configuration = {}
+    face_tuning_source = (
+        face_configuration.get("face_tuning_source")
+        or face_configuration.get("config_source")
+        or face_trace.get("config_source")
+        or "global"
+    )
+
+    vlm_policy_trace = _semantic_vlm_policy_trace(semantic_descriptor_result)
+    vlm_policy_source = (
+        vlm_policy_trace.get("vlm_policy_source")
+        or vlm_policy_trace.get("config_source")
+        or "not_evaluated"
+    )
+
+    trace.update(
+        {
+            "face_tuning_source": face_tuning_source,
+            "vlm_policy_source": vlm_policy_source,
+            "face_effective_config_hash": face_configuration.get("effective_config_hash"),
+            "vlm_effective_policy_hash": vlm_policy_trace.get("effective_policy_hash"),
+            "face_camera_config_version": face_configuration.get("camera_config_version"),
+            "vlm_camera_config_version": vlm_policy_trace.get("camera_config_version"),
+            "face_camera_config_hash": face_configuration.get("camera_config_hash"),
+            "vlm_camera_config_hash": vlm_policy_trace.get("camera_config_hash"),
+        }
+    )
+    trace["camera_override_applied"] = any(
+        _source_applied(source)
+        for source in (
+            trace.get("face_tuning_source"),
+            trace.get("vlm_policy_source"),
+        )
+    )
+    return trace
+
+
+def _semantic_vlm_policy_trace(semantic_descriptor_result: SemanticDescriptorResult | None) -> dict:
+    if semantic_descriptor_result is None:
+        return {}
+    descriptor = semantic_descriptor_result.descriptor or {}
+    policy_trace = descriptor.get("vlm_policy_trace")
+    if isinstance(policy_trace, dict):
+        return policy_trace
+    backend_trace = descriptor.get("semantic_backend_trace") or descriptor.get("generation_trace")
+    if isinstance(backend_trace, dict):
+        nested_policy_trace = backend_trace.get("vlm_policy_trace")
+        if isinstance(nested_policy_trace, dict):
+            return nested_policy_trace
+    return {}
+
+
+def _source_applied(source: object) -> bool:
+    if source is None:
+        return False
+    return str(source) not in {"", "global", "global_defaults", "not_provided", "not_evaluated"}
 
 
 def process_fixture(fixture_path: str) -> dict:
@@ -219,6 +296,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
                     source_frame_ref=semantic_source_frame_ref,
                     face_detection=face_detection,
                     event_type_hint="face_detected_unidentified",
+                    camera_id=message.camera_id,
+                    camera_metadata=message.payload.metadata,
                 )
                 semantic_descriptor_result = frame_ref_service.canonicalize_semantic_descriptor(
                     semantic_descriptor_result,
@@ -335,6 +414,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
                 source_frame_ref=semantic_source_frame_ref,
                 face_detection=face_detection,
                 event_type_hint="human_presence_no_face",
+                camera_id=message.camera_id,
+                camera_metadata=message.payload.metadata,
             )
             semantic_descriptor_result = frame_ref_service.canonicalize_semantic_descriptor(
                 semantic_descriptor_result,
@@ -429,6 +510,13 @@ def process_message(message: FrameIngestedMessage) -> dict:
             if recurrent_resolution.requires_case_evaluation:
                 decision.payload["requires_case_evaluation"] = True
 
+        camera_config_trace = _build_camera_runtime_config_trace(
+            message=message,
+            face_detection=face_detection,
+            semantic_descriptor_result=semantic_descriptor_result,
+        )
+        decision.payload["camera_runtime_config_trace"] = camera_config_trace
+
         event = build_recognition_event(
             event_type=decision.event_type,
             camera_id=track.camera_id,
@@ -475,7 +563,10 @@ def process_message(message: FrameIngestedMessage) -> dict:
                     decision_reason=supplemental.decision_reason,
                     frame_ref=published_frame_ref,
                     evidence_refs=published_evidence_refs,
-                    payload_details=supplemental.payload,
+                    payload_details={
+                        **supplemental.payload,
+                        "camera_runtime_config_trace": camera_config_trace,
+                    },
                 )
                 supplemental_recognition_event = repo.add_recognition_event(
                     subject_id=supplemental_subject_id,

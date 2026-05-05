@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -66,9 +68,20 @@ class Settings(BaseSettings):
     vlm_max_image_edge: int = 384
     vlm_serialization_guard_enabled: bool = True
     vlm_enable_for_event_types: str = (
-        "face_detected_unidentified,human_presence_no_face,"
-        "manual_review_required,recurrent_unresolved_subject,case_suggestion_created"
+        "manual_review_required,identity_conflict,"
+        "recurrent_unresolved_subject,case_suggestion_created"
     )
+    vlm_disable_for_camera_ids: str = ""
+    vlm_camera_policy_overrides_json: str = ""
+    vlm_max_allowed_latency_seconds: float = 60.0
+    vlm_max_allowed_rss_mb: float = 0.0
+    vlm_max_concurrent_inferences: int = 1
+    vlm_concurrency_acquire_timeout_seconds: float = 0.0
+    vlm_degradation_policy: str = "auto_then_secondary_then_simple"
+    vlm_secondary_backend: str = "smolvlm"
+    vlm_recent_failure_threshold: int = 3
+    vlm_circuit_breaker_window_seconds: int = 300
+    vlm_circuit_breaker_cooldown_seconds: int = 300
     # Legacy aliases kept so older .env files and tests degrade predictably.
     semantic_use_real_vlm: bool | None = None
     semantic_vlm_primary_model: str = ""
@@ -142,6 +155,27 @@ class Settings(BaseSettings):
             for raw_value in self.vlm_enable_for_event_types.split(",")
             if raw_value.strip()
         ]
+
+    @property
+    def vlm_disabled_camera_id_policy(self) -> list[str]:
+        return [
+            raw_value.strip().lower()
+            for raw_value in self.vlm_disable_for_camera_ids.split(",")
+            if raw_value.strip()
+        ]
+
+    @property
+    def vlm_camera_policy_overrides(self) -> dict[str, Any]:
+        raw_value = self.vlm_camera_policy_overrides_json.strip()
+        if not raw_value:
+            return {}
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return parsed
 
 
 settings = Settings()

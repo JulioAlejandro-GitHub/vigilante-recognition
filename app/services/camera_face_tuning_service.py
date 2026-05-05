@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from app.config import Settings, settings
+from app.services.camera_runtime_config_service import extract_camera_runtime_config, stable_config_hash
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,9 @@ class InsightFaceEffectiveTuning:
     camera_override_applied: bool
     camera_override_key: str | None = None
     camera_override_errors: tuple[str, ...] = field(default_factory=tuple)
+    camera_config_version: str | None = None
+    camera_config_hash: str | None = None
+    effective_config_hash: str | None = None
 
     def quality_thresholds_trace(self) -> dict[str, object]:
         return {
@@ -51,6 +55,10 @@ class InsightFaceEffectiveTuning:
         return {
             "camera_id": self.camera_id,
             "config_source": self.config_source,
+            "face_tuning_source": self.config_source,
+            "camera_config_version": self.camera_config_version,
+            "camera_config_hash": self.camera_config_hash,
+            "effective_config_hash": self.effective_config_hash,
             "camera_override_applied": self.camera_override_applied,
             "camera_override_key": self.camera_override_key,
             "camera_override_errors": list(self.camera_override_errors),
@@ -99,6 +107,9 @@ class CameraFaceTuningService:
     }
 
     _METADATA_PATHS: tuple[tuple[str, ...], ...] = (
+        ("recognition", "face_tuning", "insightface"),
+        ("recognition", "face_tuning"),
+        ("recognition", "insightface"),
         ("insightface",),
         ("insightface_tuning",),
         ("face_tuning", "insightface"),
@@ -143,28 +154,30 @@ class CameraFaceTuningService:
         camera_metadata: Mapping[str, Any] | None = None,
     ) -> InsightFaceEffectiveTuning:
         invalid_errors: list[str] = []
-        for source, override_key, raw_override in self._override_candidates(
+        for candidate in self._override_candidates(
             camera_id=camera_id,
             camera_metadata=camera_metadata,
         ):
-            override = self._normalize_override(raw_override)
+            override = self._normalize_override(candidate.override)
             if not override:
                 continue
             tuning, errors = self._apply_override(
                 camera_id=camera_id,
                 defaults=defaults,
                 override=override,
-                source=source,
-                override_key=override_key,
+                source=candidate.source,
+                override_key=candidate.override_key,
+                camera_config_version=candidate.camera_config_version,
+                camera_config_hash=candidate.camera_config_hash,
             )
             if not errors:
                 return tuning
-            invalid_errors.extend(f"{source}:{error}" for error in errors)
+            invalid_errors.extend(f"{candidate.source}:{error}" for error in errors)
             logger.warning(
                 "insightface_camera_override_invalid camera_id=%s source=%s override_key=%s errors=%s",
                 camera_id or "<unknown>",
-                source,
-                override_key,
+                candidate.source,
+                candidate.override_key,
                 ";".join(errors),
             )
 
@@ -182,6 +195,15 @@ class CameraFaceTuningService:
             config_source="global",
             camera_override_applied=False,
             camera_override_errors=tuple(invalid_errors),
+            effective_config_hash=_effective_tuning_hash(
+                det_size=defaults.det_size,
+                detection_threshold=defaults.detection_threshold,
+                max_faces=defaults.max_faces,
+                face_quality_threshold=defaults.face_quality_threshold,
+                min_face_bbox_size=defaults.min_face_bbox_size,
+                min_face_area_ratio=defaults.min_face_area_ratio,
+                config_source="global",
+            ),
         )
 
     def _override_candidates(
@@ -189,17 +211,29 @@ class CameraFaceTuningService:
         *,
         camera_id: str | None,
         camera_metadata: Mapping[str, Any] | None,
-    ) -> list[tuple[str, str | None, Mapping[str, Any]]]:
-        candidates: list[tuple[str, str | None, Mapping[str, Any]]] = []
+    ) -> list["_TuningOverrideCandidate"]:
+        candidates: list[_TuningOverrideCandidate] = []
+        runtime_config = extract_camera_runtime_config(camera_metadata)
+        if runtime_config.face_tuning:
+            candidates.append(
+                _TuningOverrideCandidate(
+                    source=runtime_config.source_label,
+                    override_key="camera_runtime_config.recognition.face_tuning",
+                    override=runtime_config.face_tuning,
+                    camera_config_version=runtime_config.camera_config_version,
+                    camera_config_hash=runtime_config.config_hash or runtime_config.effective_config_hash,
+                )
+            )
+
         metadata_override = self._metadata_override(camera_metadata)
         if metadata_override is not None:
             override_key, override = metadata_override
-            candidates.append(("camera_metadata", override_key, override))
+            candidates.append(_TuningOverrideCandidate("camera_metadata", override_key, override))
 
         env_override = self._env_override(camera_id)
         if env_override is not None:
             override_key, override = env_override
-            candidates.append(("camera_overrides_json", override_key, override))
+            candidates.append(_TuningOverrideCandidate("camera_overrides_json", override_key, override))
         return candidates
 
     def _metadata_override(
@@ -265,6 +299,8 @@ class CameraFaceTuningService:
         override: Mapping[str, Any],
         source: str,
         override_key: str | None,
+        camera_config_version: str | None = None,
+        camera_config_hash: str | None = None,
     ) -> tuple[InsightFaceEffectiveTuning, list[str]]:
         errors: list[str] = []
         if "__invalid__" in override:
@@ -331,6 +367,17 @@ class CameraFaceTuningService:
                     camera_override_applied=False,
                     camera_override_key=override_key,
                     camera_override_errors=tuple(errors),
+                    camera_config_version=camera_config_version,
+                    camera_config_hash=camera_config_hash,
+                    effective_config_hash=_effective_tuning_hash(
+                        det_size=defaults.det_size,
+                        detection_threshold=defaults.detection_threshold,
+                        max_faces=defaults.max_faces,
+                        face_quality_threshold=defaults.face_quality_threshold,
+                        min_face_bbox_size=defaults.min_face_bbox_size,
+                        min_face_area_ratio=defaults.min_face_area_ratio,
+                        config_source="global",
+                    ),
                 ),
                 errors,
             )
@@ -350,6 +397,17 @@ class CameraFaceTuningService:
                 config_source=source,
                 camera_override_applied=True,
                 camera_override_key=override_key,
+                camera_config_version=camera_config_version,
+                camera_config_hash=camera_config_hash,
+                effective_config_hash=_effective_tuning_hash(
+                    det_size=det_size,
+                    detection_threshold=detection_threshold,
+                    max_faces=max_faces,
+                    face_quality_threshold=face_quality_threshold,
+                    min_face_bbox_size=min_face_bbox_size,
+                    min_face_area_ratio=min_face_area_ratio,
+                    config_source=source,
+                ),
             ),
             [],
         )
@@ -387,3 +445,35 @@ class CameraFaceTuningService:
         if normalized < 0:
             return 0, f"{field_name}_invalid"
         return normalized, None
+
+
+@dataclass(frozen=True)
+class _TuningOverrideCandidate:
+    source: str
+    override_key: str | None
+    override: Mapping[str, Any]
+    camera_config_version: str | None = None
+    camera_config_hash: str | None = None
+
+
+def _effective_tuning_hash(
+    *,
+    det_size: str,
+    detection_threshold: float,
+    max_faces: int,
+    face_quality_threshold: float,
+    min_face_bbox_size: int,
+    min_face_area_ratio: float,
+    config_source: str,
+) -> str | None:
+    return stable_config_hash(
+        {
+            "det_size": det_size,
+            "detection_threshold": detection_threshold,
+            "max_faces": max_faces,
+            "face_quality_threshold": face_quality_threshold,
+            "min_face_bbox_size": min_face_bbox_size,
+            "min_face_area_ratio": min_face_area_ratio,
+            "config_source": config_source,
+        }
+    )

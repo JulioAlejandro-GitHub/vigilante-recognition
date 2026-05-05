@@ -306,6 +306,10 @@ def test_vlm_is_skipped_when_event_type_policy_does_not_allow_context():
     assert descriptor.generated is True
     assert descriptor.backend == "simple_color_signature_v1"
     attempts = descriptor.descriptor["generation_trace"]["attempts"]
-    assert [attempt["status"] for attempt in attempts] == ["skipped", "skipped", "success"]
-    assert attempts[0]["reason"] == "vlm_event_type_not_enabled:human_presence_no_face"
+    assert [attempt["backend_key"] for attempt in attempts] == ["simple"]
+    assert attempts[0]["status"] == "success"
     assert descriptor.descriptor["semantic_backend_trace"]["semantic_backend_activation_allowed"] is False
+    assert (
+        descriptor.descriptor["semantic_backend_trace"]["semantic_backend_policy_reason"]
+        == "vlm_event_type_not_enabled:human_presence_no_face"
+    )
