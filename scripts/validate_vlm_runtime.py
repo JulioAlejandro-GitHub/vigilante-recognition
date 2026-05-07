@@ -82,7 +82,7 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help="Canonical source_frame_ref to publish in the descriptor. Defaults to s3://vigilante-frames/vlm-validation/<image-name>.",
     )
-    parser.add_argument("--event-type", default="human_presence_no_face")
+    parser.add_argument("--event-type", default="manual_review_required")
     parser.add_argument("--device", default=None)
     parser.add_argument("--timeout", type=int, default=None)
     parser.add_argument("--max-new-tokens", type=int, default=None)

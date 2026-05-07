@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +9,10 @@ from app.domain.entities import FaceDetectionResult
 from app.services.semantic_backends.model_loader import (
     ProcessIsolatedTransformersRunner,
     VlmRuntimeError,
+)
+from app.services.vlm_output_parser_service import (
+    VlmOutputParserError,
+    VlmOutputParserService,
 )
 
 
@@ -76,6 +78,7 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
     ) -> None:
         self.key = key
         self.backend_name = model_name
+        self._output_parser = VlmOutputParserService()
         self._runner = runner or ProcessIsolatedTransformersRunner(
             backend_key=key,
             model_name=model_name,
@@ -104,17 +107,16 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
         raw_text = runtime_result.raw_text
         response_preview = self._truncate_response(raw_text)
         try:
-            parsed = self._extract_json_payload(raw_text)
-        except SemanticBackendError as exc:
+            parse_result = self._output_parser.parse(raw_text)
+        except VlmOutputParserError as exc:
             raise SemanticBackendError(
                 exc.reason,
                 details={
                     **runtime_result.trace_payload(),
-                    "raw_output_chars": len(raw_text),
-                    "raw_output_preview": response_preview,
-                    **exc.details,
+                    **exc.trace,
                 },
             ) from exc
+        parsed = parse_result.descriptor
 
         return SemanticBackendOutput(
             backend_name=self.backend_name,
@@ -127,9 +129,11 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
                 "max_new_tokens": context.max_new_tokens,
                 "max_image_edge": context.max_image_edge,
                 "raw_output_chars": len(raw_text),
+                "raw_output_preview": response_preview,
                 "raw_output_preview_chars": len(response_preview),
                 "parsed_json_keys": sorted(str(key) for key in parsed.keys())[:30],
                 "descriptor_valid": True,
+                **parse_result.trace,
                 **runtime_result.trace_payload(),
             },
         )
@@ -166,32 +170,6 @@ class TransformersImageTextSemanticBackend(SemanticDescriptorBackend):
             "}\n"
             f"Context: face_state={face_state}. Prefer generic clothing labels such as upper_garment, jacket, hoodie, shirt, pants, jeans, skirt, backpack, cap, front, left, right."
         )
-
-    def _extract_json_payload(self, raw_text: str) -> dict[str, Any]:
-        cleaned = raw_text.strip()
-        fenced_match = re.search(r"```(?:json)?\s*(\{.*\})\s*```", cleaned, flags=re.DOTALL)
-        if fenced_match:
-            cleaned = fenced_match.group(1).strip()
-
-        if cleaned.startswith("{") and cleaned.endswith("}"):
-            try:
-                parsed = json.loads(cleaned)
-            except json.JSONDecodeError as exc:
-                raise SemanticBackendError("vlm_output_invalid_json") from exc
-            if isinstance(parsed, dict):
-                return parsed
-
-        brace_match = re.search(r"(\{.*\})", cleaned, flags=re.DOTALL)
-        if brace_match:
-            candidate = brace_match.group(1)
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError as exc:
-                raise SemanticBackendError("vlm_output_invalid_json") from exc
-            if isinstance(parsed, dict):
-                return parsed
-
-        raise SemanticBackendError("vlm_output_missing_json_object")
 
     def _coerce_confidence(self, value: Any) -> float | None:
         try:

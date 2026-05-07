@@ -45,29 +45,42 @@ class RabbitMqEventSource:
         self._channel = None
 
     def iter_deliveries(self, *, max_messages: int | None = None) -> Iterator[RabbitMqDelivery]:
-        channel = self._ensure_channel()
         consumed = 0
 
         while max_messages is None or consumed < max_messages:
-            for method, properties, body in channel.consume(
-                queue=self.topology.recognition_queue,
-                inactivity_timeout=self.idle_timeout_seconds,
-                auto_ack=False,
-            ):
-                if method is None:
-                    if max_messages is None:
-                        break
-                    return
-                headers = dict(getattr(properties, "headers", None) or {})
-                yield RabbitMqDelivery(
-                    body=body,
-                    delivery_tag=method.delivery_tag,
-                    headers=headers,
-                    redelivered=bool(getattr(method, "redelivered", False)),
-                    properties=properties,
+            channel = self._ensure_channel()
+            try:
+                for method, properties, body in channel.consume(
+                    queue=self.topology.recognition_queue,
+                    inactivity_timeout=self.idle_timeout_seconds,
+                    auto_ack=False,
+                ):
+                    if method is None:
+                        if max_messages is None:
+                            break
+                        return
+                    headers = dict(getattr(properties, "headers", None) or {})
+                    yield RabbitMqDelivery(
+                        body=body,
+                        delivery_tag=method.delivery_tag,
+                        headers=headers,
+                        redelivered=bool(getattr(method, "redelivered", False)),
+                        properties=properties,
+                    )
+                    consumed += 1
+                    if max_messages is not None and consumed >= max_messages:
+                        return
+            except Exception as exc:
+                if not self._is_recoverable_consume_error(exc):
+                    raise
+                logger.warning(
+                    "rabbitmq_consumer_reconnecting queue=%s error_type=%s error=%s",
+                    self.topology.recognition_queue,
+                    type(exc).__name__,
+                    str(exc),
                 )
-                consumed += 1
-                if max_messages is not None and consumed >= max_messages:
+                self._discard_connection()
+                if max_messages is not None:
                     return
             if max_messages is not None:
                 return
@@ -98,18 +111,35 @@ class RabbitMqEventSource:
         )
 
     def close(self) -> None:
+        self._discard_connection()
+
+    def _discard_connection(self) -> None:
         channel = self._channel
+        connection = self._connection
+        self._channel = None
+        self._connection = None
         if channel is not None:
             cancel = getattr(channel, "cancel", None)
             if callable(cancel):
                 try:
                     cancel()
-                except Exception:
-                    pass
-        if self._connection is not None and getattr(self._connection, "is_closed", False) is False:
-            self._connection.close()
-        self._connection = None
-        self._channel = None
+                except Exception as exc:
+                    logger.debug(
+                        "rabbitmq_channel_cancel_ignored queue=%s error_type=%s error=%s",
+                        self.topology.recognition_queue,
+                        type(exc).__name__,
+                        str(exc),
+                    )
+        if connection is not None and getattr(connection, "is_closed", False) is False:
+            try:
+                connection.close()
+            except Exception as exc:
+                logger.debug(
+                    "rabbitmq_connection_close_ignored queue=%s error_type=%s error=%s",
+                    self.topology.recognition_queue,
+                    type(exc).__name__,
+                    str(exc),
+                )
 
     def _ensure_channel(self):
         if self._channel is not None and getattr(self._channel, "is_open", True):
@@ -150,6 +180,26 @@ class RabbitMqEventSource:
             blocked_connection_timeout=30,
         )
         return pika.BlockingConnection(parameters)
+
+    def _is_recoverable_consume_error(self, exc: Exception) -> bool:
+        if isinstance(exc, ValueError) and "Timeout closed before call" in str(exc):
+            return True
+
+        exc_type = type(exc)
+        module_name = getattr(exc_type, "__module__", "")
+        type_name = getattr(exc_type, "__name__", "")
+        if module_name.startswith("pika.") and any(
+            token in type_name
+            for token in [
+                "AMQPConnection",
+                "ChannelClosed",
+                "ChannelWrongState",
+                "ConnectionClosed",
+                "StreamLost",
+            ]
+        ):
+            return True
+        return False
 
     def _retry_properties(self, delivery: RabbitMqDelivery, *, headers: dict[str, Any]):
         try:

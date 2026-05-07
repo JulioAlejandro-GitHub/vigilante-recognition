@@ -29,6 +29,12 @@ def build_vlm_execution_policy_snapshot() -> dict[str, Any]:
         "camera_policy_overrides_configured": bool(settings.vlm_camera_policy_overrides),
         "max_allowed_latency_seconds": settings.vlm_max_allowed_latency_seconds,
         "max_allowed_rss_mb": settings.vlm_max_allowed_rss_mb,
+        "qwen_max_allowed_rss_mb": settings.qwen_max_allowed_rss_mb,
+        "smolvlm_max_allowed_rss_mb": settings.smolvlm_max_allowed_rss_mb,
+        "backend_budgets": {
+            "qwen": {"max_allowed_rss_mb": settings.qwen_max_allowed_rss_mb},
+            "smolvlm": {"max_allowed_rss_mb": settings.smolvlm_max_allowed_rss_mb},
+        },
         "max_concurrent_inferences": settings.vlm_max_concurrent_inferences,
         "concurrency_acquire_timeout_seconds": settings.vlm_concurrency_acquire_timeout_seconds,
         "degradation_policy": settings.vlm_degradation_policy,
@@ -62,6 +68,10 @@ def validate_vlm_runtime_config() -> dict[str, Any]:
         errors.append("vlm_max_allowed_latency_seconds_must_be_zero_or_positive")
     if snapshot["max_allowed_rss_mb"] < 0:
         errors.append("vlm_max_allowed_rss_mb_must_be_zero_or_positive")
+    if snapshot["qwen_max_allowed_rss_mb"] < 0:
+        errors.append("qwen_max_allowed_rss_mb_must_be_zero_or_positive")
+    if snapshot["smolvlm_max_allowed_rss_mb"] < 0:
+        errors.append("smolvlm_max_allowed_rss_mb_must_be_zero_or_positive")
     if snapshot["max_concurrent_inferences"] < 1:
         errors.append("vlm_max_concurrent_inferences_must_be_positive")
     if snapshot["degradation_policy"] not in {

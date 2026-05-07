@@ -78,6 +78,9 @@ def test_vlm_runtime_config_defaults_are_safe_and_operational() -> None:
     assert validation["policy"]["timeout_seconds"] == 60
     assert validation["policy"]["max_new_tokens"] == 192
     assert validation["policy"]["max_image_edge"] == 384
+    assert validation["policy"]["max_allowed_rss_mb"] == 8192.0
+    assert validation["policy"]["qwen_max_allowed_rss_mb"] == 12288.0
+    assert validation["policy"]["smolvlm_max_allowed_rss_mb"] == 10240.0
     assert validation["policy"]["serialization_guard_enabled"] is True
 
 

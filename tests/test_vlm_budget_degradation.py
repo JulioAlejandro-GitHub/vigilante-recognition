@@ -138,7 +138,11 @@ def test_memory_budget_rejects_vlm_and_falls_back_to_simple() -> None:
         settings,
         "semantic_descriptor_backend",
         "qwen",
-    ), patch.object(settings, "vlm_max_allowed_rss_mb", 128.0):
+    ), patch.object(settings, "vlm_max_allowed_rss_mb", 128.0), patch.object(
+        settings,
+        "qwen_max_allowed_rss_mb",
+        0.0,
+    ):
         descriptor = service.generate(
             frame_ref=fixture.frame_ref,
             event_type_hint="manual_review_required",

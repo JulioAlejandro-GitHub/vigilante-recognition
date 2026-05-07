@@ -60,7 +60,7 @@ class VlmDegradationState:
             self._prune_locked(state, now=now)
             state.recent_failures.append({"at": now, "reason": reason})
             threshold = max(1, int(settings.vlm_recent_failure_threshold or 1))
-            if len(state.recent_failures) >= threshold:
+            if reason == "vlm_memory_budget_exceeded" or len(state.recent_failures) >= threshold:
                 state.circuit_open_until = now + max(
                     1,
                     int(settings.vlm_circuit_breaker_cooldown_seconds or 1),

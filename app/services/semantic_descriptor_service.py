@@ -251,11 +251,13 @@ class SemanticDescriptorService:
                     attempt_payload["status"] = "rejected_by_budget"
                     attempt_payload["reason"] = reason
                     attempt_payload["descriptor_valid"] = False
-                    generation_trace["attempts"].append(attempt_payload)
-                    vlm_degradation_state.record_failure(
-                        self._normalize_backend_key(backend_key),
-                        reason=reason,
+                    attempt_payload["health_after_attempt"] = (
+                        vlm_degradation_state.record_failure(
+                            self._normalize_backend_key(backend_key),
+                            reason=reason,
+                        )
                     )
+                    generation_trace["attempts"].append(attempt_payload)
                     continue
 
                 if backend_key in self.REAL_BACKEND_KEYS:
@@ -300,54 +302,52 @@ class SemanticDescriptorService:
                 rejection_reasons.append(str(exc))
                 failure_details = dict(exc.details)
                 failure_details.setdefault("timeout_seconds", context.timeout_seconds)
-                generation_trace["attempts"].append(
-                    {
-                        **failure_details,
-                        "backend_key": backend_key,
-                        "backend_name": backend.backend_name,
-                        "status": "failed",
-                        "reason": str(exc),
-                        "duration_ms": duration_ms,
-                        "timeout_applied_seconds": context.timeout_seconds,
-                        "max_new_tokens": context.max_new_tokens,
-                        "max_image_edge": context.max_image_edge,
-                        "event_type": event_type_hint,
-                        "camera_id": camera_id,
-                        "policy": policy_trace,
-                        "descriptor_valid": False,
-                    }
-                )
+                failure_payload = {
+                    **failure_details,
+                    "backend_key": backend_key,
+                    "backend_name": backend.backend_name,
+                    "status": "failed",
+                    "reason": str(exc),
+                    "duration_ms": duration_ms,
+                    "timeout_applied_seconds": context.timeout_seconds,
+                    "max_new_tokens": context.max_new_tokens,
+                    "max_image_edge": context.max_image_edge,
+                    "event_type": event_type_hint,
+                    "camera_id": camera_id,
+                    "policy": policy_trace,
+                    "descriptor_valid": False,
+                }
                 if backend_key in self.REAL_BACKEND_KEYS:
-                    vlm_degradation_state.record_failure(
+                    failure_payload["health_after_attempt"] = vlm_degradation_state.record_failure(
                         self._normalize_backend_key(backend_key),
                         reason=str(exc),
                     )
+                generation_trace["attempts"].append(failure_payload)
             except Exception as exc:  # pragma: no cover - defensive path
                 duration_ms = self._duration_ms(attempt_started_at)
                 reason = f"unexpected_backend_error:{backend_key}:{type(exc).__name__}"
                 rejection_reasons.append(reason)
-                generation_trace["attempts"].append(
-                    {
-                        "backend_key": backend_key,
-                        "backend_name": backend.backend_name,
-                        "status": "failed",
-                        "reason": reason,
-                        "duration_ms": duration_ms,
-                        "timeout_seconds": context.timeout_seconds,
-                        "timeout_applied_seconds": context.timeout_seconds,
-                        "max_new_tokens": context.max_new_tokens,
-                        "max_image_edge": context.max_image_edge,
-                        "event_type": event_type_hint,
-                        "camera_id": camera_id,
-                        "policy": policy_trace,
-                        "descriptor_valid": False,
-                    }
-                )
+                failure_payload = {
+                    "backend_key": backend_key,
+                    "backend_name": backend.backend_name,
+                    "status": "failed",
+                    "reason": reason,
+                    "duration_ms": duration_ms,
+                    "timeout_seconds": context.timeout_seconds,
+                    "timeout_applied_seconds": context.timeout_seconds,
+                    "max_new_tokens": context.max_new_tokens,
+                    "max_image_edge": context.max_image_edge,
+                    "event_type": event_type_hint,
+                    "camera_id": camera_id,
+                    "policy": policy_trace,
+                    "descriptor_valid": False,
+                }
                 if backend_key in self.REAL_BACKEND_KEYS:
-                    vlm_degradation_state.record_failure(
+                    failure_payload["health_after_attempt"] = vlm_degradation_state.record_failure(
                         self._normalize_backend_key(backend_key),
                         reason=reason,
                     )
+                generation_trace["attempts"].append(failure_payload)
             finally:
                 if concurrency_acquired:
                     vlm_concurrency_gate.release()

@@ -238,6 +238,29 @@ def test_rabbitmq_event_source_keeps_waiting_after_idle_timeout() -> None:
     assert delivery.headers == {"x-test": "yes"}
 
 
+def test_rabbitmq_event_source_reconnects_after_recoverable_consume_error(caplog) -> None:
+    channel = _RecoverableErrorThenDeliveryChannel()
+    source = RabbitMqEventSource(
+        host="localhost",
+        port=5672,
+        username="guest",
+        password="guest",
+        virtual_host="/",
+        topology=FrameIngestedTopology(),
+        idle_timeout_seconds=0.01,
+        connection_factory=lambda: _FakeRabbitMqConnection(channel),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.ingestion.rabbitmq_event_source"):
+        delivery = next(source.iter_deliveries())
+
+    assert channel.consume_calls == 2
+    assert delivery.delivery_tag == 100
+    assert delivery.body == b'{"recovered": true}'
+    assert "rabbitmq_consumer_reconnecting" in caplog.text
+    assert "Timeout closed before call" in caplog.text
+
+
 def _frame(tmp_path: Path) -> Path:
     frame_path = tmp_path / "frame.jpg"
     frame_path.write_bytes(b"\xff\xd8test\xff\xd9")
@@ -384,4 +407,20 @@ class _IdleThenDeliveryChannel(_FakeRabbitMqChannel):
             SimpleNamespace(delivery_tag=99, redelivered=False),
             SimpleNamespace(headers={"x-test": "yes"}),
             b'{"ok": true}',
+        )
+
+
+class _RecoverableErrorThenDeliveryChannel(_FakeRabbitMqChannel):
+    def __init__(self) -> None:
+        super().__init__()
+        self.consume_calls = 0
+
+    def consume(self, **kwargs):
+        self.consume_calls += 1
+        if self.consume_calls == 1:
+            raise ValueError("Timeout closed before call")
+        yield (
+            SimpleNamespace(delivery_tag=100, redelivered=True),
+            SimpleNamespace(headers={"x-recovered": "yes"}),
+            b'{"recovered": true}',
         )

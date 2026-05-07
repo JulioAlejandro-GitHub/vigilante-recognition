@@ -74,7 +74,9 @@ class Settings(BaseSettings):
     vlm_disable_for_camera_ids: str = ""
     vlm_camera_policy_overrides_json: str = ""
     vlm_max_allowed_latency_seconds: float = 60.0
-    vlm_max_allowed_rss_mb: float = 0.0
+    vlm_max_allowed_rss_mb: float = 8192.0
+    qwen_max_allowed_rss_mb: float = 12288.0
+    smolvlm_max_allowed_rss_mb: float = 10240.0
     vlm_max_concurrent_inferences: int = 1
     vlm_concurrency_acquire_timeout_seconds: float = 0.0
     vlm_degradation_policy: str = "auto_then_secondary_then_simple"

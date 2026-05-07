@@ -256,23 +256,33 @@ def evaluate_attempt_budget(
 
     budget = policy_decision.budget
     reasons: list[str] = []
+    backend_budget = _resolve_backend_budget(budget, backend_key)
     observed_latency_seconds = _coerce_float(attempt.get("duration_ms")) / 1000.0
-    max_latency_seconds = _coerce_float(budget.get("max_allowed_latency_seconds"))
+    max_latency_seconds = _coerce_float(backend_budget.get("max_allowed_latency_seconds"))
     if max_latency_seconds > 0 and observed_latency_seconds > max_latency_seconds:
         reasons.append("vlm_latency_budget_exceeded")
 
     observed_rss_mb = _max_observed_rss_mb(attempt)
-    max_rss_mb = _coerce_float(budget.get("max_allowed_rss_mb"))
+    max_rss_mb = _coerce_float(backend_budget.get("max_allowed_rss_mb"))
     if max_rss_mb > 0 and observed_rss_mb is not None and observed_rss_mb > max_rss_mb:
         reasons.append("vlm_memory_budget_exceeded")
 
     trace = {
         "status": "ok" if not reasons else "exceeded",
         "reasons": reasons,
+        "backend_key": backend_key,
+        "budget_scope": backend_budget["budget_scope"],
+        "rss_budget_source": backend_budget["rss_budget_source"],
         "observed_latency_seconds": round(observed_latency_seconds, 4),
         "max_allowed_latency_seconds": max_latency_seconds,
         "observed_rss_mb": observed_rss_mb,
         "max_allowed_rss_mb": max_rss_mb,
+        "configured_global_max_allowed_rss_mb": backend_budget[
+            "configured_global_max_allowed_rss_mb"
+        ],
+        "configured_backend_max_allowed_rss_mb": backend_budget[
+            "configured_backend_max_allowed_rss_mb"
+        ],
     }
     return not reasons, reasons, trace
 
@@ -319,6 +329,7 @@ def _build_effective_policy(
         "degradation_policy": settings.vlm_degradation_policy,
         "max_allowed_latency_seconds": settings.vlm_max_allowed_latency_seconds,
         "max_allowed_rss_mb": settings.vlm_max_allowed_rss_mb,
+        "backend_budgets": _default_backend_budgets(),
         "max_concurrent_inferences": settings.vlm_max_concurrent_inferences,
         "_policy_sources": ["global_defaults"],
         "_policy_errors": [],
@@ -416,9 +427,29 @@ def _apply_override(
     if "max_allowed_latency_seconds" in normalized_override:
         _apply_float_override(policy, normalized_override, "max_allowed_latency_seconds", "max_allowed_latency_seconds", source)
     if "max_rss_mb" in normalized_override:
-        _apply_float_override(policy, normalized_override, "max_rss_mb", "max_allowed_rss_mb", source)
+        _apply_global_rss_override(policy, normalized_override, "max_rss_mb", source)
     if "max_allowed_rss_mb" in normalized_override:
-        _apply_float_override(policy, normalized_override, "max_allowed_rss_mb", "max_allowed_rss_mb", source)
+        _apply_global_rss_override(policy, normalized_override, "max_allowed_rss_mb", source)
+    if "qwen_max_allowed_rss_mb" in normalized_override:
+        _apply_backend_rss_override(
+            policy,
+            backend_key="qwen",
+            value=normalized_override["qwen_max_allowed_rss_mb"],
+            source=source,
+        )
+    if "smolvlm_max_allowed_rss_mb" in normalized_override:
+        _apply_backend_rss_override(
+            policy,
+            backend_key="smolvlm",
+            value=normalized_override["smolvlm_max_allowed_rss_mb"],
+            source=source,
+        )
+    if "backend_budgets" in normalized_override:
+        _apply_backend_budget_overrides(
+            policy,
+            normalized_override["backend_budgets"],
+            source=source,
+        )
     if "max_concurrent_inferences" in normalized_override:
         value = _coerce_optional_float(normalized_override["max_concurrent_inferences"])
         if value is None or value < 0:
@@ -474,6 +505,14 @@ def _metadata_policy_override(camera_metadata: dict[str, Any]) -> dict[str, Any]
         "vlm_disable_for_event_types",
         "vlm_max_allowed_latency_seconds",
         "vlm_max_allowed_rss_mb",
+        "qwen_max_allowed_rss_mb",
+        "vlm_qwen_max_allowed_rss_mb",
+        "qwen_max_rss_mb",
+        "smolvlm_max_allowed_rss_mb",
+        "vlm_smolvlm_max_allowed_rss_mb",
+        "smolvlm_max_rss_mb",
+        "vlm_backend_budgets",
+        "backend_budgets",
         "vlm_max_concurrent_inferences",
         "vlm_degradation_policy",
     }
@@ -501,6 +540,15 @@ def _normalize_override_keys(override: dict[str, Any]) -> dict[str, Any]:
         "vlm_max_allowed_rss_mb": "max_allowed_rss_mb",
         "memory_budget_mb": "max_rss_mb",
         "max_memory_mb": "max_rss_mb",
+        "qwen_max_rss_mb": "qwen_max_allowed_rss_mb",
+        "vlm_qwen_max_rss_mb": "qwen_max_allowed_rss_mb",
+        "vlm_qwen_max_allowed_rss_mb": "qwen_max_allowed_rss_mb",
+        "smolvlm_max_rss_mb": "smolvlm_max_allowed_rss_mb",
+        "vlm_smolvlm_max_rss_mb": "smolvlm_max_allowed_rss_mb",
+        "vlm_smolvlm_max_allowed_rss_mb": "smolvlm_max_allowed_rss_mb",
+        "vlm_backend_budgets": "backend_budgets",
+        "per_backend_budgets": "backend_budgets",
+        "per_backend_budget": "backend_budgets",
         "vlm_max_concurrent_inferences": "max_concurrent_inferences",
         "max_concurrency": "max_concurrent_inferences",
         "max_camera_concurrency": "max_concurrent_inferences",
@@ -524,6 +572,71 @@ def _apply_float_override(
         _record_policy_error(policy, source, f"{target_key}_invalid")
         return
     policy[target_key] = value
+
+
+def _apply_global_rss_override(
+    policy: dict[str, Any],
+    normalized_override: dict[str, Any],
+    source_key: str,
+    source: str,
+) -> None:
+    value = _coerce_optional_float(normalized_override[source_key])
+    if value is None or value < 0:
+        _record_policy_error(policy, source, "max_allowed_rss_mb_invalid")
+        return
+    policy["max_allowed_rss_mb"] = value
+
+
+def _apply_backend_rss_override(
+    policy: dict[str, Any],
+    *,
+    backend_key: str,
+    value: Any,
+    source: str,
+) -> None:
+    normalized_backend_key = normalize_backend_key(backend_key)
+    if normalized_backend_key not in NORMALIZED_REAL_BACKEND_KEYS:
+        _record_policy_error(policy, source, f"backend_budget_unknown_backend:{backend_key}")
+        return
+    parsed_value = _coerce_optional_float(value)
+    if parsed_value is None or parsed_value < 0:
+        _record_policy_error(policy, source, f"{normalized_backend_key}_max_allowed_rss_mb_invalid")
+        return
+    policy.setdefault("backend_budgets", _default_backend_budgets()).setdefault(
+        normalized_backend_key,
+        {},
+    )["max_allowed_rss_mb"] = parsed_value
+
+
+def _apply_backend_budget_overrides(
+    policy: dict[str, Any],
+    value: Any,
+    *,
+    source: str,
+) -> None:
+    if not isinstance(value, dict):
+        _record_policy_error(policy, source, "backend_budgets_invalid")
+        return
+    for raw_backend_key, raw_budget in value.items():
+        backend_key = normalize_backend_key(str(raw_backend_key))
+        if backend_key not in NORMALIZED_REAL_BACKEND_KEYS:
+            _record_policy_error(policy, source, f"backend_budget_unknown_backend:{raw_backend_key}")
+            continue
+        if isinstance(raw_budget, dict):
+            normalized_budget = _normalize_override_keys(raw_budget)
+            budget_value = (
+                normalized_budget.get("max_allowed_rss_mb")
+                if "max_allowed_rss_mb" in normalized_budget
+                else normalized_budget.get("max_rss_mb")
+            )
+        else:
+            budget_value = raw_budget
+        _apply_backend_rss_override(
+            policy,
+            backend_key=backend_key,
+            value=budget_value,
+            source=source,
+        )
 
 
 def _record_policy_error(policy: dict[str, Any], source: str, error: str) -> None:
@@ -632,6 +745,7 @@ def _filter_degraded_backends(raw_chain: list[str]) -> tuple[list[str], list[dic
 
 
 def _build_budget(policy: dict[str, Any]) -> dict[str, Any]:
+    backend_budgets = _coerce_backend_budgets(policy.get("backend_budgets"))
     return {
         "max_allowed_latency_seconds": _coerce_float(
             policy.get("max_allowed_latency_seconds", settings.vlm_max_allowed_latency_seconds)
@@ -639,6 +753,7 @@ def _build_budget(policy: dict[str, Any]) -> dict[str, Any]:
         "max_allowed_rss_mb": _coerce_float(
             policy.get("max_allowed_rss_mb", settings.vlm_max_allowed_rss_mb)
         ),
+        "backend_budgets": backend_budgets,
         "max_concurrent_inferences": int(
             _coerce_float(
                 policy.get("max_concurrent_inferences", settings.vlm_max_concurrent_inferences)
@@ -646,6 +761,62 @@ def _build_budget(policy: dict[str, Any]) -> dict[str, Any]:
         ),
         "concurrency_acquire_timeout_seconds": settings.vlm_concurrency_acquire_timeout_seconds,
         "timeout_seconds": settings.effective_vlm_timeout_seconds,
+    }
+
+
+def _default_backend_budgets() -> dict[str, dict[str, float]]:
+    return {
+        "qwen": {
+            "max_allowed_rss_mb": _coerce_float(settings.qwen_max_allowed_rss_mb),
+        },
+        "smolvlm": {
+            "max_allowed_rss_mb": _coerce_float(settings.smolvlm_max_allowed_rss_mb),
+        },
+    }
+
+
+def _coerce_backend_budgets(value: Any) -> dict[str, dict[str, float]]:
+    defaults = _default_backend_budgets()
+    if not isinstance(value, dict):
+        return defaults
+    result = defaults
+    for raw_backend_key, raw_budget in value.items():
+        backend_key = normalize_backend_key(str(raw_backend_key))
+        if backend_key not in NORMALIZED_REAL_BACKEND_KEYS:
+            continue
+        if isinstance(raw_budget, dict):
+            max_rss = _coerce_float(raw_budget.get("max_allowed_rss_mb"))
+        else:
+            max_rss = _coerce_float(raw_budget)
+        result.setdefault(backend_key, {})["max_allowed_rss_mb"] = max_rss
+    return result
+
+
+def _resolve_backend_budget(budget: dict[str, Any], backend_key: str) -> dict[str, Any]:
+    global_max_rss = _coerce_float(budget.get("max_allowed_rss_mb"))
+    backend_budgets = budget.get("backend_budgets")
+    backend_budget = {}
+    if isinstance(backend_budgets, dict):
+        backend_budget = backend_budgets.get(backend_key) or {}
+    backend_max_rss = _coerce_float(backend_budget.get("max_allowed_rss_mb"))
+    if backend_max_rss > 0:
+        max_rss = backend_max_rss
+        rss_budget_source = f"{backend_key}_max_allowed_rss_mb"
+        budget_scope = "backend"
+    else:
+        max_rss = global_max_rss
+        rss_budget_source = "vlm_max_allowed_rss_mb"
+        budget_scope = "global"
+
+    return {
+        "max_allowed_latency_seconds": _coerce_float(
+            budget.get("max_allowed_latency_seconds")
+        ),
+        "max_allowed_rss_mb": max_rss,
+        "configured_global_max_allowed_rss_mb": global_max_rss,
+        "configured_backend_max_allowed_rss_mb": backend_max_rss,
+        "rss_budget_source": rss_budget_source,
+        "budget_scope": budget_scope,
     }
 
 

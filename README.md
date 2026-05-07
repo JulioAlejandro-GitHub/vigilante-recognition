@@ -515,9 +515,10 @@ El worker puede usar un backend VLM real, pero no es obligatorio para tests ni s
 - Guard de serialización por proceso/modelo: `VLM_SERIALIZATION_GUARD_ENABLED=true`
 - Activación por contexto: `VLM_ENABLE_FOR_EVENT_TYPES=manual_review_required,identity_conflict,recurrent_unresolved_subject,case_suggestion_created`
 - Cámaras deshabilitadas: `VLM_DISABLE_FOR_CAMERA_IDS=uuid1,uuid2`
-- Override por cámara: `VLM_CAMERA_POLICY_OVERRIDES_JSON='{"camera-id":{"enabled":true,"backend":"auto","preferred_backend":"qwen","secondary_backend":"smolvlm","enable_for_event_types":["manual_review_required"],"max_latency_seconds":30,"max_rss_mb":8192}}'`
+- Override por cámara: `VLM_CAMERA_POLICY_OVERRIDES_JSON='{"camera-id":{"enabled":true,"backend":"auto","preferred_backend":"qwen","secondary_backend":"smolvlm","enable_for_event_types":["manual_review_required"],"max_latency_seconds":30,"max_rss_mb":8192,"qwen_max_rss_mb":12288,"smolvlm_max_rss_mb":10240}}'`
 - Presupuesto de latencia: `VLM_MAX_ALLOWED_LATENCY_SECONDS=60`
-- Presupuesto RSS: `VLM_MAX_ALLOWED_RSS_MB=0`, donde `0` desactiva ese límite
+- Presupuesto RSS global: `VLM_MAX_ALLOWED_RSS_MB=8192`, donde `0` desactiva ese límite
+- Presupuesto RSS por backend: `QWEN_MAX_ALLOWED_RSS_MB=12288` y `SMOLVLM_MAX_ALLOWED_RSS_MB=10240`; si quedan en `0`, heredan el global
 - Concurrencia VLM máxima por worker: `VLM_MAX_CONCURRENT_INFERENCES=1`
 - Política de degradación: `VLM_DEGRADATION_POLICY=auto_then_secondary_then_simple|preferred_then_secondary_then_simple|preferred_then_simple|simple_only`
 - Backend secundario explícito: `VLM_SECONDARY_BACKEND=smolvlm`
@@ -535,7 +536,7 @@ La precedencia de política es:
 3. `VLM_CAMERA_POLICY_OVERRIDES_JSON` y `VLM_DISABLE_FOR_CAMERA_IDS`
 4. defaults globales
 
-Un override por cámara puede deshabilitar VLM, forzar `simple`, forzar `qwen`/`smolvlm`/`auto`, cambiar eventos elegibles y ajustar presupuestos. Si el default global es `SEMANTIC_DESCRIPTOR_BACKEND=simple`, una cámara con `enabled=true` y `backend=auto|qwen|smolvlm` puede habilitar VLM solo para esa cámara.
+Un override por cámara puede deshabilitar VLM, forzar `simple`, forzar `qwen`/`smolvlm`/`auto`, cambiar eventos elegibles y ajustar presupuestos globales o por backend (`qwen_max_rss_mb`, `smolvlm_max_rss_mb` o `backend_budgets`). El budget por backend tiene prioridad sobre un `max_rss_mb` genérico; usa un budget por backend en la cámara cuando quieras limitar un modelo específico. Si el default global es `SEMANTIC_DESCRIPTOR_BACKEND=simple`, una cámara con `enabled=true` y `backend=auto|qwen|smolvlm` puede habilitar VLM solo para esa cámara.
 
 Las dependencias VLM están aisladas para no volver pesada la instalación base:
 
@@ -589,7 +590,9 @@ VLM_MAX_IMAGE_EDGE=384 \
 PYTHONPATH=. python -m app.worker --rabbitmq-consumer --rabbitmq-max-messages 5
 ```
 
-Si `qwen` o `smolvlm` fallan por import, modelo no disponible, timeout, memoria, device/provider, rendering de prompt o runtime, el evento sigue saliendo y el descriptor cae a `simple_color_signature_v1` cuando `SEMANTIC_ENABLE_FALLBACK=true`. En `auto`, la cadena es backend preferido, backend secundario y `simple`.
+Si `qwen` o `smolvlm` fallan por import, modelo no disponible, timeout, memoria, salida no parseable, device/provider, rendering de prompt o runtime, el evento sigue saliendo y el descriptor cae a `simple_color_signature_v1` cuando `SEMANTIC_ENABLE_FALLBACK=true`. En `auto`, la cadena es backend preferido, backend secundario y `simple`.
+
+El parser VLM acepta JSON directo, bloques fenced `json`, objetos JSON con texto antes o despues, y JSON-like recuperable con comillas simples, trailing commas, claves simples sin comillas o escalares simples sin comillas. No convierte texto libre sin objeto JSON en semantica inventada: si no hay objeto recuperable con campos semanticos esperados, el intento falla con `vlm_output_invalid_json`, `vlm_output_missing_json_object`, `vlm_output_json_not_object` o `vlm_output_missing_semantic_fields` y continua la degradacion normal.
 
 La traza comparable queda en `payload.semantic_descriptor.semantic_backend_trace` e incluye:
 
@@ -602,7 +605,8 @@ La traza comparable queda en `payload.semantic_descriptor.semantic_backend_trace
 - `max_new_tokens`, `max_image_edge`, `requested_device`, `device`, `dtype`
 - `image_original_size`, `image_inference_size`, `image_resized`
 - `raw_output_chars`, `descriptor_output_chars`, `descriptor_valid`
-- `budget.status`, `budget.reasons`, latencia observada y memoria observada por intento
+- `parse_stage`, `parse_strategy_used`, `json_recovered`, `raw_output_preview`, `normalized_fields`, `missing_fields` y `parser_error` si aplica
+- `budget.status`, `budget.reasons`, `budget_scope`, `rss_budget_source`, latencia observada, memoria observada y RSS maximo aplicado por intento
 - `model_load_elapsed_ms`, `runtime_inference_elapsed_ms` y memoria `*_rss_mb`/`*_max_rss_mb` si está disponible
 
 Además, cada evento emitido por recognition incluye
@@ -681,7 +685,9 @@ Política operativa inicial:
 - `VLM_DISABLE_FOR_CAMERA_IDS=`
 - `VLM_CAMERA_POLICY_OVERRIDES_JSON={}`
 - `VLM_MAX_ALLOWED_LATENCY_SECONDS=60`
-- `VLM_MAX_ALLOWED_RSS_MB=0`
+- `VLM_MAX_ALLOWED_RSS_MB=8192`
+- `QWEN_MAX_ALLOWED_RSS_MB=12288`
+- `SMOLVLM_MAX_ALLOWED_RSS_MB=10240`
 - `VLM_MAX_CONCURRENT_INFERENCES=1`
 - `VLM_CONCURRENCY_ACQUIRE_TIMEOUT_SECONDS=0`
 - `VLM_DEGRADATION_POLICY=auto_then_secondary_then_simple`
