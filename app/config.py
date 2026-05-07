@@ -106,6 +106,15 @@ class Settings(BaseSettings):
     storage_s3_cache_dir: str = ".runtime/ingestion/frame-cache"
     storage_s3_connect_timeout_seconds: float = 3.0
     storage_s3_read_timeout_seconds: float = 15.0
+    runtime_metrics_enabled: bool = True
+    runtime_metrics_store: str = "jsonl"
+    runtime_metrics_path: str = ".runtime/metrics/events.jsonl"
+    runtime_metrics_rotate_max_mb: float = 25.0
+    runtime_metrics_retention_files: int = 5
+    runtime_metrics_log_summary_every_n_events: int = 50
+    runtime_metrics_enable_http: bool = False
+    runtime_metrics_http_host: str = "127.0.0.1"
+    runtime_metrics_http_port: int = 8765
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

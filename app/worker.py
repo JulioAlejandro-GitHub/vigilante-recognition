@@ -37,6 +37,8 @@ from app.services.camera_face_metrics_service import log_all_camera_face_metrics
 from app.services.camera_runtime_config_service import extract_camera_runtime_config
 from app.services.presence_service import PresenceService
 from app.services.recurrent_subject_service import RecurrentSubjectService
+from app.services.runtime_metrics_http_service import start_runtime_metrics_http_server
+from app.services.runtime_metrics_service import RuntimeMetricsService
 from app.services.semantic_descriptor_service import SemanticDescriptorService
 from app.services.vlm_execution_policy_service import build_vlm_execution_policy_snapshot
 from app.services.track_service import TrackService
@@ -44,6 +46,7 @@ from app.storage.frame_resolver import FrameResolutionError
 
 logger = logging.getLogger(__name__)
 _SEMANTIC_DESCRIPTOR_SERVICE_CACHE: tuple[tuple[object, ...], SemanticDescriptorService] | None = None
+_RUNTIME_METRICS_SERVICE_CACHE: tuple[tuple[object, ...], RuntimeMetricsService] | None = None
 
 
 def _get_semantic_descriptor_service() -> SemanticDescriptorService:
@@ -60,6 +63,21 @@ def _get_semantic_descriptor_service() -> SemanticDescriptorService:
     if _SEMANTIC_DESCRIPTOR_SERVICE_CACHE is None or _SEMANTIC_DESCRIPTOR_SERVICE_CACHE[0] != cache_key:
         _SEMANTIC_DESCRIPTOR_SERVICE_CACHE = (cache_key, SemanticDescriptorService())
     return _SEMANTIC_DESCRIPTOR_SERVICE_CACHE[1]
+
+
+def _get_runtime_metrics_service() -> RuntimeMetricsService:
+    global _RUNTIME_METRICS_SERVICE_CACHE
+    cache_key = (
+        settings.runtime_metrics_enabled,
+        settings.runtime_metrics_store,
+        settings.runtime_metrics_path,
+        settings.runtime_metrics_rotate_max_mb,
+        settings.runtime_metrics_retention_files,
+        settings.runtime_metrics_log_summary_every_n_events,
+    )
+    if _RUNTIME_METRICS_SERVICE_CACHE is None or _RUNTIME_METRICS_SERVICE_CACHE[0] != cache_key:
+        _RUNTIME_METRICS_SERVICE_CACHE = (cache_key, RuntimeMetricsService.from_settings())
+    return _RUNTIME_METRICS_SERVICE_CACHE[1]
 
 
 def _safe_generate_semantic_descriptor(
@@ -591,6 +609,13 @@ def process_message(message: FrameIngestedMessage) -> dict:
 
         for emitted_event in events_to_publish:
             publisher.publish(emitted_event)
+        _get_runtime_metrics_service().record_emitted_events(
+            source_message=message,
+            emitted_events=events_to_publish,
+            face_detection=face_detection,
+            semantic_descriptor_result=semantic_descriptor_result,
+            camera_runtime_config_trace=camera_config_trace,
+        )
         return event
 
 
@@ -679,6 +704,14 @@ def main() -> None:
         parser.error("Provide exactly one of --fixture, --ingestion-jsonl or --rabbitmq-consumer")
 
     configure_logging(settings.log_level)
+    if settings.runtime_metrics_enabled and settings.runtime_metrics_enable_http:
+        runtime_metrics_service = _get_runtime_metrics_service()
+        if runtime_metrics_service.store is not None:
+            start_runtime_metrics_http_server(
+                store=runtime_metrics_service.store,
+                host=settings.runtime_metrics_http_host,
+                port=settings.runtime_metrics_http_port,
+            )
     init_db()
     try:
         if args.fixture:

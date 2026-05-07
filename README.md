@@ -81,6 +81,9 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - cada evento con descriptor incluye `semantic_backend_requested`, `semantic_backend_selected`, `semantic_backend_fallback_used`, `semantic_backend_error` y `semantic_backend_trace`
 - `semantic_backend_trace` registra política efectiva, backend solicitado/permitido/seleccionado, fallback, latencia total, timeout aplicado, device, resize de imagen, longitud de salida, validez del descriptor y señales de memoria cuando el runtime puede observarlas
 - `VLM_ENABLE_FOR_EVENT_TYPES` limita cuándo se intenta VLM; por defecto habilita eventos de mayor valor (`manual_review_required`, `identity_conflict`, `recurrent_unresolved_subject`, `case_suggestion_created`) y deja `human_presence_no_face` en `simple`
+- el worker persiste métricas operativas locales en JSONL bajo `.runtime/metrics/` para comparar cámara, backend facial, backend semántico y tipo de evento sin reemplazar las trazas existentes
+- cada registro de métricas conserva solo señales operativas: backend solicitado/seleccionado, fallback, detección usable, score de calidad, latencias, parser recovery, budget RSS/latencia, rechazo por budget, fuente de config por cámara y hashes/versiones disponibles
+- el resumen local permite revisar tasa de rostro detectado/usable, baja calidad, fallback a `simple`, éxito VLM, parser recovery, rechazos por budget y p50/p95 simples de InsightFace/VLM
 
 ### Resolución de cámara en Slice 1
 
@@ -163,6 +166,64 @@ El modo JSONL reutiliza el mismo pipeline que `--fixture`, por lo que persiste e
 La segunda corrida del mismo archivo no debe reprocesar las líneas ya consumidas.
 El worker registra contadores de `read`, `processed`, `skipped_checkpoint`,
 `skipped_duplicate`, `rejected` y `frame_resolution_errors`.
+
+### Métricas operativas locales
+
+Recognition persiste una fila JSONL por evento de recognition emitido, usando los
+traces ya construidos por el pipeline:
+
+- `face_backend_trace`
+- `semantic_backend_trace`
+- `vlm_policy_trace`
+- `camera_runtime_config_trace`
+
+La persistencia es append-only con rotación simple por tamaño y retención de
+archivos rotados. Por defecto se escribe en:
+
+```bash
+.runtime/metrics/events.jsonl
+```
+
+Configuración relevante:
+
+```bash
+RUNTIME_METRICS_ENABLED=true
+RUNTIME_METRICS_STORE=jsonl
+RUNTIME_METRICS_PATH=.runtime/metrics/events.jsonl
+RUNTIME_METRICS_ROTATE_MAX_MB=25
+RUNTIME_METRICS_RETENTION_FILES=5
+RUNTIME_METRICS_LOG_SUMMARY_EVERY_N_EVENTS=50
+RUNTIME_METRICS_ENABLE_HTTP=false
+RUNTIME_METRICS_HTTP_HOST=127.0.0.1
+RUNTIME_METRICS_HTTP_PORT=8765
+```
+
+Consulta local:
+
+```bash
+PYTHONPATH=. python scripts/show_runtime_metrics.py
+PYTHONPATH=. python scripts/show_runtime_metrics.py --section camera
+PYTHONPATH=. python scripts/show_runtime_metrics.py --section backend
+PYTHONPATH=. python scripts/show_runtime_metrics.py --section event-type
+PYTHONPATH=. python scripts/show_runtime_metrics.py --json
+```
+
+Si `RUNTIME_METRICS_ENABLE_HTTP=true`, el worker expone un endpoint local:
+
+```bash
+curl http://127.0.0.1:8765/runtime-metrics/summary
+```
+
+El resumen incluye:
+
+- por cámara: eventos procesados, tasas de rostro detectado/usable/baja calidad,
+  backend semántico más usado, éxito VLM, fallback a `simple`, parser recovery,
+  rechazos por budget y latencias p50/p95
+- por backend facial: uso, fallback, fallback-away, usable rate y latencias
+- por backend semántico: selected/success/fallback, parser recovery, JSON inválido,
+  budget rejected, duración p50/p95 y RSS observado mean/max
+- por `event_type`: activación VLM, éxito semántico, fallback, rechazos por budget
+  y utilidad operativa por tipo de evento
 
 Para forzar un replay completo desde el byte 0:
 
