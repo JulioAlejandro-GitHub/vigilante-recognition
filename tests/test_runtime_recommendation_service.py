@@ -120,6 +120,7 @@ def test_runtime_recommendation_service_persists_recommendations(tmp_path) -> No
     assert result["persisted_count"] == len(result["recommendations"])
     assert persisted
     assert persisted[0]["camera_id"] == "cam-face"
+    assert persisted[0]["status"] == "pending"
     assert persisted[0]["suggested_value"]
 
 
@@ -153,6 +154,7 @@ def test_runtime_recommendation_cli_outputs_readable_summary(tmp_path) -> None:
 
     assert "Runtime recommendations:" in completed.stdout
     assert "Camera cam-cli" in completed.stdout
+    assert "[pending|" in completed.stdout
     assert "Ajustar face_quality_threshold" in completed.stdout
     assert "suggested:" in completed.stdout
 

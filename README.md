@@ -266,10 +266,14 @@ curl http://127.0.0.1:8765/runtime-metrics/recommendations/cameras
 
 Cada recomendación incluye:
 
-- `camera_id`, `recommendation_type`, `severity`, `title`, `reason`
+- `recommendation_id`, `camera_id`, `status=pending`, `recommendation_type`, `severity`, `title`, `reason`
 - `evidence`, `metrics_used`, `window_summary`, `generated_at`
 - `current_value`, `suggested_value`, `confidence`
 - `actionable` y `auto_apply=false`
+
+El estado inicial queda como `pending` para que `vigilante-api` pueda llevar el
+workflow humano posterior (`approved`, `rejected`, `applied`, `failed`,
+`rolled_back`) sin que recognition aplique cambios ni escriba en `api.camera`.
 
 Reglas actuales, explícitas y conservadoras:
 

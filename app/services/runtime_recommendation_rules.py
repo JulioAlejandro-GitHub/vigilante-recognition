@@ -702,6 +702,7 @@ def _recommendation(
         "rule_set_version": RECOMMENDATION_RULESET_VERSION,
         "recommendation_id": f"{generated_at}:{stable_key}",
         "camera_id": camera_id,
+        "status": "pending",
         "recommendation_type": recommendation_type,
         "severity": severity,
         "title": title,

@@ -198,7 +198,7 @@ def _print_recommendations(recommendations: list[dict[str, Any]], *, header: str
         evidence = recommendation.get("evidence", {})
         print(
             "  "
-            f"[{recommendation.get('severity')}] "
+            f"[{recommendation.get('status', 'pending')}|{recommendation.get('severity')}] "
             f"{recommendation.get('recommendation_type')}: "
             f"{recommendation.get('title')}"
         )

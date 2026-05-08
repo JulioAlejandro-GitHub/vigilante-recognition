@@ -39,6 +39,7 @@ def test_recommendation_rules_suggest_face_quality_tuning() -> None:
 
     face_recommendation = _first_type(recommendations, "face_tuning")
     assert face_recommendation["title"] == "Ajustar face_quality_threshold"
+    assert face_recommendation["status"] == "pending"
     assert face_recommendation["suggested_value"]["face_quality_threshold"] == 0.65
     assert "low_quality_face_rate" in face_recommendation["metrics_used"]
     assert face_recommendation["auto_apply"] is False
