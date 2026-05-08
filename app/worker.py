@@ -74,6 +74,13 @@ def _get_runtime_metrics_service() -> RuntimeMetricsService:
         settings.runtime_metrics_rotate_max_mb,
         settings.runtime_metrics_retention_files,
         settings.runtime_metrics_log_summary_every_n_events,
+        settings.runtime_recommendations_enabled,
+        settings.runtime_recommendations_path,
+        settings.runtime_recommendations_rotate_max_mb,
+        settings.runtime_recommendations_retention_files,
+        settings.runtime_recommendations_min_events_per_camera,
+        settings.runtime_recommendations_window_hours,
+        settings.runtime_recommendations_log_every_n_events,
     )
     if _RUNTIME_METRICS_SERVICE_CACHE is None or _RUNTIME_METRICS_SERVICE_CACHE[0] != cache_key:
         _RUNTIME_METRICS_SERVICE_CACHE = (cache_key, RuntimeMetricsService.from_settings())
@@ -704,13 +711,20 @@ def main() -> None:
         parser.error("Provide exactly one of --fixture, --ingestion-jsonl or --rabbitmq-consumer")
 
     configure_logging(settings.log_level)
-    if settings.runtime_metrics_enabled and settings.runtime_metrics_enable_http:
+    if settings.runtime_metrics_enabled and (
+        settings.runtime_metrics_enable_http or settings.runtime_recommendations_enable_http
+    ):
         runtime_metrics_service = _get_runtime_metrics_service()
         if runtime_metrics_service.store is not None:
             start_runtime_metrics_http_server(
                 store=runtime_metrics_service.store,
                 host=settings.runtime_metrics_http_host,
                 port=settings.runtime_metrics_http_port,
+                recommendation_service=(
+                    runtime_metrics_service.recommendation_service
+                    if settings.runtime_recommendations_enable_http
+                    else None
+                ),
             )
     init_db()
     try:

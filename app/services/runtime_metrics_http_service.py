@@ -7,6 +7,7 @@ from threading import Thread
 from typing import Any
 
 from app.services.runtime_metrics_summary_service import RuntimeMetricsSummaryService
+from app.services.runtime_recommendation_service import RuntimeRecommendationService
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +20,13 @@ class RuntimeMetricsHttpServer:
         host: str,
         port: int,
         summary_service: RuntimeMetricsSummaryService | None = None,
+        recommendation_service: RuntimeRecommendationService | None = None,
     ) -> None:
         self.store = store
         self.host = host
         self.port = int(port)
         self.summary_service = summary_service or RuntimeMetricsSummaryService()
+        self.recommendation_service = recommendation_service
         self._server: ThreadingHTTPServer | None = None
         self._thread: Thread | None = None
 
@@ -33,6 +36,7 @@ class RuntimeMetricsHttpServer:
 
         store = self.store
         summary_service = self.summary_service
+        recommendation_service = self.recommendation_service
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 - stdlib hook name
@@ -42,6 +46,30 @@ class RuntimeMetricsHttpServer:
                 if self.path in {"/", "/runtime-metrics/summary"}:
                     summary = summary_service.summarize_store(store)
                     self._write_json(summary)
+                    return
+                if self.path == "/runtime-metrics/recommendations":
+                    if recommendation_service is None:
+                        self.send_response(404)
+                        self.end_headers()
+                        return
+                    self._write_json(recommendation_service.generate(persist=False))
+                    return
+                if self.path == "/runtime-metrics/recommendations/cameras":
+                    if recommendation_service is None:
+                        self.send_response(404)
+                        self.end_headers()
+                        return
+                    result = recommendation_service.generate(persist=False)
+                    self._write_json(
+                        {
+                            "schema_version": result.get("schema_version"),
+                            "rule_set_version": result.get("rule_set_version"),
+                            "generated_at": result.get("generated_at"),
+                            "window_summary": result.get("window_summary"),
+                            "by_camera": result.get("by_camera", {}),
+                            "recommendations": result.get("recommendations", []),
+                        }
+                    )
                     return
                 self.send_response(404)
                 self.end_headers()
@@ -86,8 +114,14 @@ def start_runtime_metrics_http_server(
     store: Any,
     host: str,
     port: int,
+    recommendation_service: RuntimeRecommendationService | None = None,
 ) -> RuntimeMetricsHttpServer | None:
-    server = RuntimeMetricsHttpServer(store=store, host=host, port=port)
+    server = RuntimeMetricsHttpServer(
+        store=store,
+        host=host,
+        port=port,
+        recommendation_service=recommendation_service,
+    )
     try:
         server.start()
     except OSError as exc:

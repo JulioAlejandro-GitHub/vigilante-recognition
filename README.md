@@ -225,6 +225,70 @@ El resumen incluye:
 - por `event_type`: activación VLM, éxito semántico, fallback, rechazos por budget
   y utilidad operativa por tipo de evento
 
+### Recomendaciones operativas por cámara
+
+Recognition puede leer las métricas persistidas y generar recomendaciones locales,
+trazables y no vinculantes para tuning facial y policy VLM. Este slice no aplica
+cambios automáticamente: no escribe en `api.camera`, no muta
+`metadata.recognition` y no cambia envs en caliente. Las recomendaciones quedan
+como JSONL append-only y como salida CLI para revisión humana.
+
+Configuración relevante:
+
+```bash
+RUNTIME_RECOMMENDATIONS_ENABLED=true
+RUNTIME_RECOMMENDATIONS_PATH=.runtime/metrics/recommendations.jsonl
+RUNTIME_RECOMMENDATIONS_ROTATE_MAX_MB=10
+RUNTIME_RECOMMENDATIONS_RETENTION_FILES=5
+RUNTIME_RECOMMENDATIONS_MIN_EVENTS_PER_CAMERA=20
+RUNTIME_RECOMMENDATIONS_WINDOW_HOURS=24
+RUNTIME_RECOMMENDATIONS_LOG_EVERY_N_EVENTS=50
+RUNTIME_RECOMMENDATIONS_ENABLE_HTTP=false
+```
+
+Consulta local:
+
+```bash
+PYTHONPATH=. python scripts/show_runtime_recommendations.py
+PYTHONPATH=. python scripts/show_runtime_recommendations.py --json
+PYTHONPATH=. python scripts/show_runtime_recommendations.py --persist
+PYTHONPATH=. python scripts/show_runtime_recommendations.py --from-store --limit 20
+PYTHONPATH=. python scripts/show_runtime_recommendations.py --camera-id <camera_id>
+```
+
+Si `RUNTIME_METRICS_ENABLE_HTTP=true` y
+`RUNTIME_RECOMMENDATIONS_ENABLE_HTTP=true`, el mismo servidor local expone:
+
+```bash
+curl http://127.0.0.1:8765/runtime-metrics/recommendations
+curl http://127.0.0.1:8765/runtime-metrics/recommendations/cameras
+```
+
+Cada recomendación incluye:
+
+- `camera_id`, `recommendation_type`, `severity`, `title`, `reason`
+- `evidence`, `metrics_used`, `window_summary`, `generated_at`
+- `current_value`, `suggested_value`, `confidence`
+- `actionable` y `auto_apply=false`
+
+Reglas actuales, explícitas y conservadoras:
+
+- evidencia insuficiente: si una cámara tiene menos de
+  `RUNTIME_RECOMMENDATIONS_MIN_EVENTS_PER_CAMERA`, se emite estado
+  `insufficient_evidence`
+- tuning facial: si `face_detected` es bajo y la latencia p95 facial deja margen,
+  sugiere subir `det_size`; si la detección es alta pero `face_usable` cae o
+  `low_quality_face` sube, sugiere revisar `face_quality_threshold` o filtros de
+  tamaño (`min_face_bbox_size`, `min_face_area_ratio`) cuando hay señales de rostro
+  pequeño
+- policy VLM: si VLM cae mayoritariamente a `simple`, sugiere `simple` temporal o
+  limitar VLM a eventos de mayor valor; si Qwen/SmolVLM muestra mejor éxito, bajo
+  fallback y parser estable, sugiere preferir ese backend
+- budget: si un backend acumula rechazos de budget, sugiere evitarlo o un aumento
+  acotado de RSS solo cuando el RSS observado queda cerca del límite actual
+- cámara sana: cuando no se superan umbrales y hay evidencia suficiente, emite
+  `Sin cambios recomendados`
+
 Para forzar un replay completo desde el byte 0:
 
 ```bash

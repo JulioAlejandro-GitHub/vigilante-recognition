@@ -115,6 +115,14 @@ class Settings(BaseSettings):
     runtime_metrics_enable_http: bool = False
     runtime_metrics_http_host: str = "127.0.0.1"
     runtime_metrics_http_port: int = 8765
+    runtime_recommendations_enabled: bool = True
+    runtime_recommendations_path: str = ".runtime/metrics/recommendations.jsonl"
+    runtime_recommendations_rotate_max_mb: float = 10.0
+    runtime_recommendations_retention_files: int = 5
+    runtime_recommendations_min_events_per_camera: int = 20
+    runtime_recommendations_window_hours: float = 24.0
+    runtime_recommendations_log_every_n_events: int = 50
+    runtime_recommendations_enable_http: bool = False
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
