@@ -6,6 +6,7 @@ from uuid import UUID
 
 from app.config import settings
 from app.consumer import load_fixture_message
+from app.correlation import extract_run_id, source_correlation_payload
 from app.db import get_session, init_db
 from app.domain.entities import (
     FrameIngestedMessage,
@@ -236,6 +237,14 @@ def process_fixture(fixture_path: str) -> dict:
 
 def process_message(message: FrameIngestedMessage) -> dict:
     with get_session() as session:
+        source_correlation = source_correlation_payload(message)
+        run_id = extract_run_id(message)
+        logger.info(
+            "frame_ingested_processing_started event_id=%s run_id=%s frame_ref=%s",
+            message.event_id,
+            run_id or "",
+            message.frame_ref,
+        )
         frame_ref_service = CanonicalFrameRefService()
         canonical_resolution = frame_ref_service.resolve(message)
         published_frame_ref = canonical_resolution.frame_ref
@@ -553,6 +562,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
             frame_ref=published_frame_ref,
             evidence_refs=published_evidence_refs,
             payload_details=decision.payload,
+            correlation=source_correlation,
         )
         events_to_publish = [event]
         recognition_event = repo.add_recognition_event(
@@ -592,6 +602,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
                         **supplemental.payload,
                         "camera_runtime_config_trace": camera_config_trace,
                     },
+                    correlation=source_correlation,
                 )
                 supplemental_recognition_event = repo.add_recognition_event(
                     subject_id=supplemental_subject_id,
@@ -616,6 +627,13 @@ def process_message(message: FrameIngestedMessage) -> dict:
 
         for emitted_event in events_to_publish:
             publisher.publish(emitted_event)
+        logger.info(
+            "recognition_events_published source_event_id=%s run_id=%s emitted=%s primary_event_id=%s",
+            source_correlation.get("source_event_id") or "",
+            run_id or "",
+            len(events_to_publish),
+            event.get("event_id"),
+        )
         _get_runtime_metrics_service().record_emitted_events(
             source_message=message,
             emitted_events=events_to_publish,

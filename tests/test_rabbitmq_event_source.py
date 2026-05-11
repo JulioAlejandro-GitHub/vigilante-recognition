@@ -45,6 +45,42 @@ def test_process_rabbitmq_frames_acks_valid_message_after_processing(tmp_path) -
     assert source.acked == [1]
 
 
+def test_process_rabbitmq_frames_preserves_run_id_without_confusing_backlog(tmp_path) -> None:
+    frame_path = _frame(tmp_path)
+    backlog_event = _event(event_id="evt_old_backlog", frame_ref=str(frame_path))
+    smoke_event = _event(event_id="evt_smoke_frame", frame_ref=str(frame_path))
+    smoke_event["context"]["run_id"] = "smoke-run-1"
+    smoke_event["payload"]["metadata"]["pipeline"] = {"run_id": "smoke-run-1"}
+    source = _FakeRabbitMqEventSource([_delivery(backlog_event), _delivery(smoke_event)])
+    processed: list[tuple[str, str | None]] = []
+
+    def processor(message):
+        processed.append((message.event_id, message.context.get("run_id")))
+        return {
+            "event_type": "processed",
+            "payload": {
+                "source_event_id": message.event_id,
+                "run_id": message.context.get("run_id"),
+            },
+        }
+
+    result = process_rabbitmq_frames(
+        processor=processor,
+        event_source=source,
+        event_deduper=FileEventDeduper(tmp_path / "state" / "processed_events.json"),
+        rejected_event_store=RejectedEventStore(tmp_path / "state" / "rejected_events.jsonl"),
+        topology=FrameIngestedTopology(),
+        max_messages=2,
+    )
+
+    assert result.processed == 2
+    assert processed == [("evt_old_backlog", None), ("evt_smoke_frame", "smoke-run-1")]
+    smoke_outputs = [
+        event for event in result.emitted_events if event["payload"]["source_event_id"] == "evt_smoke_frame"
+    ]
+    assert smoke_outputs[0]["payload"]["run_id"] == "smoke-run-1"
+
+
 def test_process_rabbitmq_frames_skips_duplicate_event_id_with_ack(tmp_path) -> None:
     frame_path = _frame(tmp_path)
     deduper = FileEventDeduper(tmp_path / "state" / "processed_events.json")

@@ -167,6 +167,28 @@ La segunda corrida del mismo archivo no debe reprocesar las líneas ya consumida
 El worker registra contadores de `read`, `processed`, `skipped_checkpoint`,
 `skipped_duplicate`, `rejected` y `frame_resolution_errors`.
 
+### Correlación de smoke / pipeline
+
+Si un `frame.ingested` trae `run_id`, recognition lo conserva en el evento
+derivado sin requerir migraciones:
+
+- entrada aceptada: `context.run_id`,
+  `payload.metadata.pipeline.run_id`, `payload.metadata.correlation.run_id` o
+  `payload.metadata.smoke.run_id`
+- salida emitida: `context.run_id`, `payload.correlation.run_id`
+- referencia de origen: `context.source_event_id`,
+  `context.source_frame_event_id`, `payload.source_event_id` y
+  `payload.source_frame_event_id`
+
+Los logs clave incluyen la correlación:
+
+- `rabbitmq_frame_acked ... event_id=... run_id=...`
+- `rabbitmq_frame_skipped_duplicate ... event_id=... run_id=...`
+- `recognition_event_ready {... "context": {"run_id": ...}, "payload": {"source_frame_event_id": ...}}`
+
+Eventos antiguos sin `run_id` siguen procesándose; solo se omite ese campo en la
+salida.
+
 ### Métricas operativas locales
 
 Recognition persiste una fila JSONL por evento de recognition emitido, usando los

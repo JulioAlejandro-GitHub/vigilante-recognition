@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.correlation import enrich_recognition_event_with_correlation
+
 
 def build_recognition_event(
     *,
@@ -16,6 +18,7 @@ def build_recognition_event(
     frame_ref: str | None,
     evidence_refs: list[str] | None = None,
     payload_details: dict[str, Any] | None = None,
+    correlation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     camera_id_value = str(camera_id)
@@ -33,7 +36,7 @@ def build_recognition_event(
         payload.update(payload_details)
     payload["evidence_refs"] = resolved_evidence_refs
 
-    return {
+    event = {
         "event_id": f"evt_{track_id_value}_{event_type}",
         "event_type": event_type,
         "event_version": "1.0",
@@ -52,3 +55,4 @@ def build_recognition_event(
             "idempotency_key": f"{track_id_value}:{event_type}",
         },
     }
+    return enrich_recognition_event_with_correlation(event, correlation or {})

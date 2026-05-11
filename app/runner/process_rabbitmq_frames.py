@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.correlation import extract_run_id
 from app.domain.entities import FrameIngestedMessage
 from app.ingestion.event_deduper import FileEventDeduper
 from app.ingestion.frame_ingested_validator import RejectedFrameIngestedEvent, string_or_none, validate_frame_ingested_event
@@ -83,16 +84,18 @@ def process_rabbitmq_frames(
                 payload = _decode_payload(delivery.body)
                 event_id = string_or_none(payload.get("event_id"))
                 event_type = string_or_none(payload.get("event_type"))
+                run_id = extract_run_id(payload) or ""
 
                 if event_id and event_deduper.has_processed(event_id):
                     skipped_duplicate += 1
                     source.ack(delivery)
                     acked += 1
                     logger.info(
-                        "rabbitmq_frame_skipped_duplicate queue=%s delivery_tag=%s event_id=%s",
+                        "rabbitmq_frame_skipped_duplicate queue=%s delivery_tag=%s event_id=%s run_id=%s",
                         topology.recognition_queue,
                         delivery.delivery_tag,
                         event_id,
+                        run_id,
                     )
                     continue
 
@@ -110,10 +113,11 @@ def process_rabbitmq_frames(
                 processed += 1
                 acked += 1
                 logger.info(
-                    "rabbitmq_frame_acked queue=%s delivery_tag=%s event_id=%s processed=%s",
+                    "rabbitmq_frame_acked queue=%s delivery_tag=%s event_id=%s run_id=%s processed=%s",
                     topology.recognition_queue,
                     delivery.delivery_tag,
                     consumed_event_id,
+                    run_id,
                     processed,
                 )
             except UnicodeDecodeError as exc:
