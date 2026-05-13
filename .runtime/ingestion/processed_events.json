@@ -135,6 +135,11 @@
       "processed_at": "2026-05-13T01:18:59.708588+00:00",
       "source_path": "rabbitmq:vigilante.frames:frame.ingested"
     },
+    "evt_618bc773-1980-59d0-bacf-15b4252aeee0": {
+      "line_number": null,
+      "processed_at": "2026-05-13T01:26:18.021009+00:00",
+      "source_path": "rabbitmq:vigilante.frames:frame.ingested"
+    },
     "evt_6322f601-2402-52a5-9195-3566a40c48a2": {
       "line_number": null,
       "processed_at": "2026-05-13T01:13:52.895318+00:00",
