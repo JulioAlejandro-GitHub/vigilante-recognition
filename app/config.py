@@ -124,6 +124,8 @@ class Settings(BaseSettings):
     runtime_recommendations_log_every_n_events: int = 50
     runtime_recommendations_enable_http: bool = False
     log_level: str = "INFO"
+    runtime_log_level_path: str = ".runtime/log-level"
+    runtime_log_level_poll_seconds: float = 2.0
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -85,6 +85,14 @@ def process_rabbitmq_frames(
                 event_id = string_or_none(payload.get("event_id"))
                 event_type = string_or_none(payload.get("event_type"))
                 run_id = extract_run_id(payload) or ""
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "rabbitmq_frame_payload queue=%s delivery_tag=%s event_id=%s payload=%s",
+                        topology.recognition_queue,
+                        delivery.delivery_tag,
+                        event_id,
+                        json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                    )
 
                 if event_id and event_deduper.has_processed(event_id):
                     skipped_duplicate += 1
@@ -279,6 +287,15 @@ def _reject_local(
         delivery.delivery_tag,
         event_id,
         reason,
+    )
+    logger.debug(
+        "rabbitmq_frame_rejection_detail queue=%s delivery_tag=%s event_id=%s event_type=%s details=%s raw_body=%s",
+        topology.recognition_queue,
+        delivery.delivery_tag,
+        event_id,
+        event_type,
+        details or {},
+        raw_body or "",
     )
     rejected_event_store.append(
         reason=reason,

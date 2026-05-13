@@ -141,8 +141,15 @@ class RuntimeMetricsService:
             logger.warning("runtime_metrics_summary_failed error=%s", type(exc).__name__)
             return
         logger.info(
-            "runtime_metrics_summary total_events=%s cameras=%s face_backends=%s semantic_backends=%s event_types=%s",
+            "runtime_metrics_summary total_events=%s camera_count=%s face_backend_count=%s semantic_backend_count=%s event_type_count=%s",
             summary.get("total_events"),
+            len(summary.get("by_camera", {})),
+            len(summary.get("by_face_backend", {})),
+            len(summary.get("by_semantic_backend", {})),
+            len(summary.get("by_event_type", {})),
+        )
+        logger.debug(
+            "runtime_metrics_summary_detail cameras=%s face_backends=%s semantic_backends=%s event_types=%s",
             sorted(summary.get("by_camera", {}).keys()),
             sorted(summary.get("by_face_backend", {}).keys()),
             sorted(summary.get("by_semantic_backend", {}).keys()),

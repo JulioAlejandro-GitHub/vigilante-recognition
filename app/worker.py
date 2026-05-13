@@ -17,7 +17,7 @@ from app.domain.entities import (
 from app.domain.events import build_recognition_event
 from app.ingestion import InvalidFrameIngestedEventError, InvalidJsonlLineError
 from app.infra.repository import RecognitionRepository
-from app.logging import configure_logging
+from app.logging import compact_value, configure_logging
 from app.publisher import EventPublisher
 from app.runner.process_ingestion_outbox import (
     ProcessIngestionOutboxResult,
@@ -243,7 +243,7 @@ def process_message(message: FrameIngestedMessage) -> dict:
             "frame_ingested_processing_started event_id=%s run_id=%s frame_ref=%s",
             message.event_id,
             run_id or "",
-            message.frame_ref,
+            compact_value(message.frame_ref),
         )
         frame_ref_service = CanonicalFrameRefService()
         canonical_resolution = frame_ref_service.resolve(message)
@@ -260,10 +260,15 @@ def process_message(message: FrameIngestedMessage) -> dict:
             )
         elif canonical_resolution.fallback_reason:
             logger.info(
-                "canonical_frame_ref_fallback event_id=%s source=%s reason=%s published_frame_ref=%s cached_path=%s",
+                "canonical_frame_ref_fallback event_id=%s source=%s reason=%s published_frame_ref=%s",
                 message.event_id,
                 canonical_resolution.source,
                 canonical_resolution.fallback_reason,
+                compact_value(published_frame_ref),
+            )
+            logger.debug(
+                "canonical_frame_ref_fallback_detail event_id=%s published_frame_ref=%s cached_path=%s",
+                message.event_id,
                 published_frame_ref,
                 message.cached_path,
             )
@@ -550,6 +555,12 @@ def process_message(message: FrameIngestedMessage) -> dict:
             semantic_descriptor_result=semantic_descriptor_result,
         )
         decision.payload["camera_runtime_config_trace"] = camera_config_trace
+        logger.debug(
+            "camera_runtime_config_trace event_id=%s camera_id=%s trace=%s",
+            message.event_id,
+            message.camera_id,
+            camera_config_trace,
+        )
 
         event = build_recognition_event(
             event_type=decision.event_type,
@@ -728,7 +739,11 @@ def main() -> None:
     if selected_modes != 1:
         parser.error("Provide exactly one of --fixture, --ingestion-jsonl or --rabbitmq-consumer")
 
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level,
+        runtime_level_path=settings.runtime_log_level_path,
+        poll_seconds=settings.runtime_log_level_poll_seconds,
+    )
     if settings.runtime_metrics_enabled and (
         settings.runtime_metrics_enable_http or settings.runtime_recommendations_enable_http
     ):
@@ -776,7 +791,7 @@ def main() -> None:
             (
                 "worker_finished rabbitmq_queue=%s consumed=%s processed=%s acked=%s "
                 "retried=%s rejected_to_dlq=%s skipped_duplicate=%s invalid_messages=%s "
-                "frame_resolution_errors=%s processing_errors=%s deduper_path=%s rejected_events_path=%s"
+                "frame_resolution_errors=%s processing_errors=%s"
             ),
             result.queue_name,
             result.consumed,
@@ -788,6 +803,10 @@ def main() -> None:
             result.invalid_messages,
             result.frame_resolution_errors,
             result.processing_errors,
+        )
+        logger.debug(
+            "worker_finished_paths rabbitmq_queue=%s deduper_path=%s rejected_events_path=%s",
+            result.queue_name,
             result.deduper_path,
             result.rejected_events_path,
         )
@@ -798,10 +817,9 @@ def main() -> None:
         (
             "worker_finished ingestion_jsonl=%s read=%s processed=%s "
             "skipped_checkpoint=%s skipped_duplicate=%s rejected=%s "
-            "frame_resolution_errors=%s processing_errors=%s start_offset=%s final_offset=%s "
-            "checkpoint_path=%s deduper_path=%s rejected_events_path=%s"
+            "frame_resolution_errors=%s processing_errors=%s start_offset=%s final_offset=%s"
         ),
-        result.source_path,
+        compact_value(result.source_path),
         result.read,
         result.processed,
         result.skipped_checkpoint,
@@ -811,6 +829,10 @@ def main() -> None:
         result.processing_errors,
         result.start_offset,
         result.final_offset,
+    )
+    logger.debug(
+        "worker_finished_paths source_path=%s checkpoint_path=%s deduper_path=%s rejected_events_path=%s",
+        result.source_path,
         result.checkpoint_path,
         result.deduper_path,
         result.rejected_events_path,

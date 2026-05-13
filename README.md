@@ -864,6 +864,27 @@ Política operativa inicial:
 - `RABBITMQ_PREFETCH_COUNT=10`
 - `RABBITMQ_RETRY_LIMIT=3`
 - `RABBITMQ_IDLE_TIMEOUT_SECONDS=1`
+- `LOG_LEVEL=INFO`
+- `RUNTIME_LOG_LEVEL_PATH=.runtime/log-level`
+- `RUNTIME_LOG_LEVEL_POLL_SECONDS=2.0`
+
+## Logging operativo
+
+`INFO` muestra una línea por hito: frame recibido/ack, evento de recognition
+listo, backend elegido, resumen de métricas y estado del worker. Payloads
+completos, `semantic_backend_trace`, `generation_trace`, `parse_attempts`,
+`camera_runtime_config_trace`, políticas VLM y respuestas largas quedan en
+`DEBUG`.
+
+Para cambiar nivel sin reiniciar:
+
+```bash
+printf 'DEBUG\n' > .runtime/log-level
+printf 'INFO\n' > .runtime/log-level
+```
+
+Si `RUNTIME_METRICS_ENABLE_HTTP=true`, el servidor local también expone
+`POST /admin/log-level` con body `{"level":"DEBUG"}`.
 
 ## Pendiente después del Slice 8
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from app.logging import compact_value
 from app.storage.frame_resolver import FrameResolutionError
 from app.storage.temp_file_manager import FrameCachePathManager
 
@@ -49,12 +50,12 @@ class S3FrameResolver:
         target_path = self.cache_paths.path_for_object(bucket=parsed.bucket, object_key=parsed.object_key)
         if target_path.is_file():
             logger.info(
-                "remote_frame_cache_hit endpoint=%s bucket=%s object_key=%s cached_path=%s",
+                "remote_frame_cache_hit endpoint=%s bucket=%s object_key=%s",
                 self.endpoint,
                 parsed.bucket,
-                parsed.object_key,
-                target_path,
+                compact_value(parsed.object_key),
             )
+            logger.debug("remote_frame_cache_hit_detail bucket=%s object_key=%s cached_path=%s", parsed.bucket, parsed.object_key, target_path)
             return target_path.resolve()
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
@@ -72,9 +73,16 @@ class S3FrameResolver:
                 "remote_frame_download_failed endpoint=%s bucket=%s object_key=%s reason=%s error_type=%s",
                 self.endpoint,
                 parsed.bucket,
-                parsed.object_key,
+                compact_value(parsed.object_key),
                 reason,
                 type(exc).__name__,
+            )
+            logger.debug(
+                "remote_frame_download_failed_detail endpoint=%s bucket=%s object_key=%s error=%s",
+                self.endpoint,
+                parsed.bucket,
+                parsed.object_key,
+                str(exc),
             )
             raise FrameResolutionError(
                 frame_refs=[reference],
@@ -92,12 +100,12 @@ class S3FrameResolver:
             ) from exc
 
         logger.info(
-            "remote_frame_resolved endpoint=%s bucket=%s object_key=%s cached_path=%s",
+            "remote_frame_resolved endpoint=%s bucket=%s object_key=%s",
             self.endpoint,
             parsed.bucket,
-            parsed.object_key,
-            target_path,
+            compact_value(parsed.object_key),
         )
+        logger.debug("remote_frame_resolved_detail bucket=%s object_key=%s cached_path=%s", parsed.bucket, parsed.object_key, target_path)
         return target_path.resolve()
 
     def _get_client(self):

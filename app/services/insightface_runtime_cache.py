@@ -137,10 +137,13 @@ def _load_runtime(config: InsightFaceRuntimeConfig) -> InsightFaceRuntime:
         load_elapsed_ms=load_elapsed_ms,
     )
     logger.info(
-        (
-            "insightface_backend_loaded model_name=%s provider=%s providers=%s "
-            "model_root=%s det_size=%sx%s detection_threshold=%.3f ctx_id=%s backend_load_ms=%.2f"
-        ),
+        "insightface_backend_loaded model_name=%s provider=%s backend_load_ms=%.2f",
+        config.model_name,
+        config.provider_name,
+        load_elapsed_ms,
+    )
+    logger.debug(
+        "insightface_backend_config model_name=%s provider=%s providers=%s model_root=%s det_size=%sx%s detection_threshold=%.3f ctx_id=%s backend_load_ms=%.2f",
         config.model_name,
         config.provider_name,
         ",".join(config.providers),

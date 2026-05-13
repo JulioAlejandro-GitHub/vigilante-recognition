@@ -135,6 +135,14 @@ def process_ingestion_outbox(
 
             event_id = _string_or_none(payload.get("event_id"))
             event_type = _string_or_none(payload.get("event_type"))
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "ingestion_event_payload source_path=%s line_number=%s event_id=%s payload=%s",
+                    resolved_source_path,
+                    line.line_number,
+                    event_id,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str),
+                )
             if event_id and (event_id in run_seen_event_ids or (not force_replay and event_deduper.has_processed(event_id))):
                 skipped_duplicate += 1
                 logger.info(
@@ -312,6 +320,16 @@ def _reject(
         line_number,
         event_id,
         reason,
+    )
+    logger.debug(
+        "ingestion_event_rejection_detail source_path=%s line_number=%s event_id=%s event_type=%s offset=%s details=%s raw_line=%s",
+        source_path,
+        line_number,
+        event_id,
+        event_type,
+        offset,
+        details or {},
+        raw_line or "",
     )
     rejected_event_store.append(
         reason=reason,

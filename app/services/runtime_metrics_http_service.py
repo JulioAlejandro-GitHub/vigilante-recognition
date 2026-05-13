@@ -6,6 +6,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 from typing import Any
 
+from app.config import settings
+from app.logging import current_log_level_name, write_runtime_log_level
 from app.services.runtime_metrics_summary_service import RuntimeMetricsSummaryService
 from app.services.runtime_recommendation_service import RuntimeRecommendationService
 
@@ -43,6 +45,14 @@ class RuntimeMetricsHttpServer:
                 if self.path in {"/health", "/runtime-metrics/health"}:
                     self._write_json({"status": "ok"})
                     return
+                if self.path == "/admin/log-level":
+                    self._write_json(
+                        {
+                            "level": current_log_level_name(),
+                            "runtime_path": settings.runtime_log_level_path,
+                        }
+                    )
+                    return
                 if self.path in {"/", "/runtime-metrics/summary"}:
                     summary = summary_service.summarize_store(store)
                     self._write_json(summary)
@@ -74,14 +84,35 @@ class RuntimeMetricsHttpServer:
                 self.send_response(404)
                 self.end_headers()
 
+            def do_POST(self) -> None:  # noqa: N802 - stdlib hook name
+                if self.path != "/admin/log-level":
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    length = 0
+                try:
+                    payload = json.loads(self.rfile.read(length).decode("utf-8") if length > 0 else "{}")
+                    level = write_runtime_log_level(
+                        settings.runtime_log_level_path,
+                        str(payload.get("level", "")),
+                        source="admin_http",
+                    )
+                except (json.JSONDecodeError, ValueError) as exc:
+                    self._write_json({"error": "invalid_log_level", "message": str(exc)}, status_code=422)
+                    return
+                self._write_json({"level": level, "runtime_path": settings.runtime_log_level_path})
+
             def log_message(self, format: str, *args: Any) -> None:
                 logger.debug("runtime_metrics_http " + format, *args)
 
-            def _write_json(self, payload: dict[str, Any]) -> None:
+            def _write_json(self, payload: dict[str, Any], *, status_code: int = 200) -> None:
                 body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode(
                     "utf-8"
                 )
-                self.send_response(200)
+                self.send_response(status_code)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()

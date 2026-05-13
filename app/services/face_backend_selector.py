@@ -5,6 +5,7 @@ from time import perf_counter
 
 from app.config import Settings, settings
 from app.domain.entities import FaceDetectionResult, FaceEmbeddingResult
+from app.logging import compact_value
 from app.services.camera_face_metrics_service import record_camera_face_detection
 from app.services.face_backend_service import FaceBackend, FaceBackendError, SimpleFaceBackend
 from app.services.insightface_service import InsightFaceService
@@ -35,10 +36,10 @@ class FaceBackendSelector:
         camera_metadata: dict[str, object] | None = None,
     ) -> FaceDetectionResult:
         requested_backend = self._requested_backend()
-        logger.info(
+        logger.debug(
             "face_backend_requested stage=detect requested=%s frame_ref=%s",
             requested_backend,
-            frame_ref,
+            compact_value(frame_ref),
         )
         if requested_backend == "simple":
             return self._inspect_with_backend(
@@ -125,11 +126,11 @@ class FaceBackendSelector:
     ) -> FaceEmbeddingResult:
         requested_backend = self._requested_backend_from_detection(face_detection)
         selected_detection_backend = self._selected_backend_from_detection(face_detection, requested_backend)
-        logger.info(
+        logger.debug(
             "face_backend_requested stage=embedding requested=%s selected_detection_backend=%s frame_ref=%s",
             requested_backend,
             selected_detection_backend,
-            frame_ref,
+            compact_value(frame_ref),
         )
 
         if requested_backend == "simple" or selected_detection_backend == "simple":
@@ -253,20 +254,29 @@ class FaceBackendSelector:
         logger.info(
             (
                 "face_backend_selected stage=detect requested=%s selected=%s fallback_used=%s "
-                "provider=%s camera_id=%s detected=%s usable=%s faces_detected=%s elapsed_ms=%.2f "
-                "detect_elapsed_ms=%s backend_load_ms=%s runtime_reused=%s "
-                "model_name=%s det_size=%s detection_threshold=%s max_faces=%s "
-                "quality_thresholds=%s config_source=%s camera_override_applied=%s frame_ref=%s"
+                "camera_id=%s detected=%s usable=%s faces_detected=%s elapsed_ms=%.2f frame_ref=%s"
             ),
             requested_backend,
             backend.backend_key,
             fallback_used,
-            backend.provider_name,
             camera_id,
             result.detected,
             result.usable,
             trace.get("faces_detected"),
             elapsed_ms,
+            compact_value(frame_ref),
+        )
+        logger.debug(
+            (
+                "face_backend_trace stage=detect requested=%s selected=%s provider=%s camera_id=%s "
+                "detect_elapsed_ms=%s backend_load_ms=%s runtime_reused=%s model_name=%s det_size=%s "
+                "detection_threshold=%s max_faces=%s quality_thresholds=%s config_source=%s "
+                "camera_override_applied=%s trace=%s"
+            ),
+            requested_backend,
+            backend.backend_key,
+            backend.provider_name,
+            camera_id,
             trace.get("detect_elapsed_ms"),
             trace.get("backend_load_ms"),
             trace.get("runtime_reused"),
@@ -277,7 +287,7 @@ class FaceBackendSelector:
             configuration.get("quality_thresholds"),
             configuration.get("config_source"),
             configuration.get("camera_override_applied"),
-            frame_ref,
+            trace,
         )
         return result
 
@@ -328,15 +338,22 @@ class FaceBackendSelector:
             **self._selected_backend_trace_fields(backend_trace),
         }
         logger.info(
-            "face_backend_selected stage=embedding requested=%s selected=%s fallback_used=%s provider=%s generated=%s dimensions=%s elapsed_ms=%.2f frame_ref=%s",
+            "face_backend_selected stage=embedding requested=%s selected=%s fallback_used=%s generated=%s dimensions=%s elapsed_ms=%.2f frame_ref=%s",
             requested_backend,
             backend.backend_key,
             fallback_used,
-            backend.provider_name,
             result.generated,
             result.dimensions,
             elapsed_ms,
-            frame_ref,
+            compact_value(frame_ref),
+        )
+        logger.debug(
+            "face_backend_trace stage=embedding requested=%s selected=%s provider=%s frame_ref=%s trace=%s",
+            requested_backend,
+            backend.backend_key,
+            backend.provider_name,
+            compact_value(frame_ref),
+            result.embedding_backend_trace,
         )
         return result
 
