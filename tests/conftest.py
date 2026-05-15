@@ -11,6 +11,7 @@ def stable_unit_test_runtime_settings():
         "semantic_enable_fallback": True,
         "face_backend": "simple",
         "embedding_backend": "simple_face_crop_512",
+        "known_face_gallery_path": "tests/fixtures/gallery/dev_known_face_gallery.json",
         "semantic_use_real_vlm": None,
         "qwen_vl_enabled": False,
         "smolvlm_enabled": False,

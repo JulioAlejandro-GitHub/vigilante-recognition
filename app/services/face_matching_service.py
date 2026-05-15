@@ -115,6 +115,9 @@ class FaceMatchingService:
         if db_gallery:
             return db_gallery
 
+        if not settings.known_face_gallery_path:
+            return []
+
         return self._load_local_gallery_entries(settings.known_face_gallery_path, embedding_backend=embedding_backend)
 
     def _load_local_gallery_entries(self, gallery_path_value: str, *, embedding_backend: str) -> list[KnownFaceGalleryEntry]:

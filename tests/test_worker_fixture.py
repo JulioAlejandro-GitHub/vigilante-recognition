@@ -91,7 +91,7 @@ def test_orm_alignment_for_uuid_and_frame_count_dependency():
 
 @patch("app.worker.RecognitionRepository")
 @patch("app.worker.get_session")
-def test_process_fixture_smoke(mock_get_session, mock_repo_class):
+def test_process_fixture(mock_get_session, mock_repo_class):
     mock_session = MagicMock()
     mock_get_session.return_value.__enter__.return_value = mock_session
 

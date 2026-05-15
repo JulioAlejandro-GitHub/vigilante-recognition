@@ -18,6 +18,6 @@
     "idempotency_key": "frame_camera_uuid_20260317T153645123",
     "organization_id": "org_demo",
     "site_id": "site_sur",
-    "dev_known_face_gallery_path": "app/data/dev_known_face_gallery_obama_only.json"
+    "dev_known_face_gallery_path": "tests/fixtures/gallery/dev_known_face_gallery_obama_only.json"
   }
 }

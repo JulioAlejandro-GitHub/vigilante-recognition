@@ -58,7 +58,7 @@ Su objetivo actual es dejar un bootstrap funcional para:
 - si la recurrencia no resuelta alcanza umbral de caso técnico, el worker emite `case_suggestion_created` con `requires_case_evaluation=true`
 - la metadata facial y el resumen de matching se guardan dentro de `recognition_event.payload`
 - la continuidad y el estado de resolución se guardan en metadata de `observed_subject` y `human_track`
-- si `recognition.person_profile_projection` y `recognition.person_profile_embedding_projection` no tienen galería compatible disponible, se usa `app/data/dev_known_face_gallery.json` como fallback local de desarrollo
+- si `recognition.person_profile_projection` y `recognition.person_profile_embedding_projection` no tienen galería compatible disponible, el matching queda sin identificación; la galería local existe solo para tests mediante `KNOWN_FACE_GALLERY_PATH`
 - el backend facial se selecciona con `FACE_BACKEND=simple|insightface|auto`
 - `simple` mantiene OpenCV/Haar y embedding `simple_face_crop_512`
 - `insightface` fuerza InsightFace y falla claramente si no puede cargar o ejecutar
@@ -120,7 +120,7 @@ El fixture y los mensajes de entrada deben traer `payload.camera_id` como UUID v
 PYTHONPATH=. pytest
 ```
 
-4. Ejecuta exactamente estos smoke tests base:
+4. Ejecuta exactamente estas pruebas base de fixture:
 ```bash
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_no_face.json
 PYTHONPATH=. python3 -m app.worker --fixture tests/fixtures/frame_ingested_unidentified.json
@@ -167,14 +167,13 @@ La segunda corrida del mismo archivo no debe reprocesar las líneas ya consumida
 El worker registra contadores de `read`, `processed`, `skipped_checkpoint`,
 `skipped_duplicate`, `rejected` y `frame_resolution_errors`.
 
-### Correlación de smoke / pipeline
+### Correlación de pipeline
 
 Si un `frame.ingested` trae `run_id`, recognition lo conserva en el evento
 derivado sin requerir migraciones:
 
-- entrada aceptada: `context.run_id`,
-  `payload.metadata.pipeline.run_id`, `payload.metadata.correlation.run_id` o
-  `payload.metadata.smoke.run_id`
+- entrada aceptada: `context.run_id`, `payload.metadata.pipeline.run_id` o
+  `payload.metadata.correlation.run_id`
 - salida emitida: `context.run_id`, `payload.correlation.run_id`
 - referencia de origen: `context.source_event_id`,
   `context.source_frame_event_id`, `payload.source_event_id` y
@@ -448,11 +447,12 @@ PYTHONPATH=. python -m app.worker --rabbitmq-consumer --rabbitmq-max-messages 10
 
 ## Integración RabbitMQ con vigilante-ingestion
 
-Slice 3 agrega consumo real AMQP sin quitar los modos previos. El worker soporta:
+El modo operativo real consume AMQP:
 
-- `--fixture`
-- `--ingestion-jsonl`
 - `--rabbitmq-consumer`
+
+Los modos `--fixture` y `--ingestion-jsonl` quedan como dev/test only y no son
+usados por `vigilante_stack.sh up`.
 
 Topología RabbitMQ:
 
@@ -485,7 +485,7 @@ PYTHONPATH=. python -m app.worker \
   --rabbitmq-max-messages 10
 ```
 
-`--rabbitmq-max-messages` es útil para smoke tests porque el proceso termina
+`--rabbitmq-max-messages` es útil para validaciones acotadas porque el proceso termina
 después de consumir N deliveries. Sin ese flag el consumer queda corriendo hasta
 interrupción manual.
 
@@ -651,7 +651,7 @@ media de detección. El mismo estado puede consultarse desde Python con
 
 ### Backend VLM opcional
 
-El worker puede usar un backend VLM real, pero no es obligatorio para tests ni smoke tests.
+El worker puede usar un backend VLM real, pero no es obligatorio para tests.
 
 - Para tests, CI y desarrollo liviano: deja `SEMANTIC_DESCRIPTOR_BACKEND=simple`
 - Para Qwen: `SEMANTIC_DESCRIPTOR_BACKEND=qwen` y `QWEN_VL_ENABLED=true`
@@ -794,9 +794,9 @@ Política operativa inicial:
 - `tests/fixtures/images/face_identified.jpg`: rostro conocido para match positivo de desarrollo
 - `tests/fixtures/images/gallery_known_biden.jpg`: segunda identidad de galería para validar margen entre candidatos
 - `tests/fixtures/images/face_manual_review.jpg`: rostro usable para caso incierto sin match confiable
-- `app/data/dev_known_face_gallery.json`: galería local mínima usada solo cuando no hay proyecciones activas compatibles en la base
-- `app/data/dev_known_face_gallery_conflict.json`: galería local de desarrollo para forzar conflicto de identidad
-- `app/data/dev_known_face_gallery_obama_only.json`: galería local de desarrollo para forzar revisión manual sin match positivo
+- `tests/fixtures/gallery/dev_known_face_gallery.json`: galería local usada solo por tests mediante `KNOWN_FACE_GALLERY_PATH`
+- `tests/fixtures/gallery/dev_known_face_gallery_conflict.json`: galería local de desarrollo para forzar conflicto de identidad
+- `tests/fixtures/gallery/dev_known_face_gallery_obama_only.json`: galería local de desarrollo para forzar revisión manual sin match positivo
 
 ## Configuración mínima
 

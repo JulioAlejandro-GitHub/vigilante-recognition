@@ -232,10 +232,10 @@ def _source_applied(source: object) -> bool:
 
 def process_fixture(fixture_path: str) -> dict:
     message = load_fixture_message(fixture_path)
-    return process_message(message)
+    return process_message(message, allow_dev_overrides=True)
 
 
-def process_message(message: FrameIngestedMessage) -> dict:
+def process_message(message: FrameIngestedMessage, *, allow_dev_overrides: bool = False) -> dict:
     with get_session() as session:
         source_correlation = source_correlation_payload(message)
         run_id = extract_run_id(message)
@@ -319,10 +319,8 @@ def process_message(message: FrameIngestedMessage) -> dict:
                 camera_id=message.camera_id,
                 camera_metadata=message.payload.metadata,
             )
-            match_result = matching_service.match(
-                embedding_result,
-                gallery_override_path=message.context.get("dev_known_face_gallery_path"),
-            )
+            gallery_override_path = message.context.get("dev_known_face_gallery_path") if allow_dev_overrides else None
+            match_result = matching_service.match(embedding_result, gallery_override_path=gallery_override_path)
             track_service.register_face_match(
                 track=track,
                 match_result=match_result,
@@ -697,7 +695,7 @@ def process_rabbitmq_consumer(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bootstrap worker for vigilante-recognition slice 7")
-    parser.add_argument("--fixture", help="Path to frame.ingested example JSON")
+    parser.add_argument("--fixture", help="Dev/test only: path to frame.ingested fixture JSON")
     parser.add_argument(
         "--ingestion-jsonl",
         help="Path to vigilante-ingestion JSONL outbox with frame.ingested events",

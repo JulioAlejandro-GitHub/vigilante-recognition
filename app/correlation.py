@@ -11,11 +11,9 @@ def extract_run_id(value: Any) -> str | None:
 
     candidates = [
         context.get("run_id"),
-        context.get("smoke_run_id"),
         metadata.get("run_id"),
         _dict(metadata.get("pipeline")).get("run_id"),
         _dict(metadata.get("correlation")).get("run_id"),
-        _dict(metadata.get("smoke")).get("run_id"),
     ]
     for candidate in candidates:
         cleaned = _clean(candidate)

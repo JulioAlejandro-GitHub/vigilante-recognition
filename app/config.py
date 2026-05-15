@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     insightface_camera_overrides_json: str = ""
     insightface_camera_metrics_log_every_n_frames: int = 25
     embedding_backend: str = "simple_face_crop_512"
-    known_face_gallery_path: str = "app/data/dev_known_face_gallery.json"
+    known_face_gallery_path: str = ""
     cross_camera_match_threshold: float = 0.85
     cross_camera_time_window_seconds: int = 600
     identity_conflict_margin: float = 0.25

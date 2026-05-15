@@ -11,18 +11,18 @@ CAMERA_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def test_source_correlation_payload_extracts_run_id_and_source_event() -> None:
-    message = _message(run_id="smoke-run-1")
+    message = _message(run_id="pipeline-run-1")
 
     correlation = source_correlation_payload(message)
 
-    assert correlation["run_id"] == "smoke-run-1"
+    assert correlation["run_id"] == "pipeline-run-1"
     assert correlation["source_event_id"] == "evt_frame_1"
     assert correlation["source_frame_event_id"] == "evt_frame_1"
     assert correlation["source_frame_ref"] == "s3://vigilante-frames/frame.jpg"
 
 
 def test_build_recognition_event_propagates_run_id_and_source_event_id() -> None:
-    correlation = source_correlation_payload(_message(run_id="smoke-run-1"))
+    correlation = source_correlation_payload(_message(run_id="pipeline-run-1"))
 
     event = build_recognition_event(
         event_type="human_presence_no_face",
@@ -36,11 +36,11 @@ def test_build_recognition_event_propagates_run_id_and_source_event_id() -> None
         correlation=correlation,
     )
 
-    assert event["context"]["run_id"] == "smoke-run-1"
+    assert event["context"]["run_id"] == "pipeline-run-1"
     assert event["context"]["source_event_id"] == "evt_frame_1"
     assert event["payload"]["source_event_id"] == "evt_frame_1"
     assert event["payload"]["source_frame_event_id"] == "evt_frame_1"
-    assert event["payload"]["correlation"]["run_id"] == "smoke-run-1"
+    assert event["payload"]["correlation"]["run_id"] == "pipeline-run-1"
 
 
 def test_build_recognition_event_keeps_source_event_id_without_run_id() -> None:
